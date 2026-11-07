@@ -1022,3 +1022,7 @@ func (p *Player) cueLocked() {
 	}
 	p.openFileLocked(p.startFrame, len(p.order))
 }
+
+// SetProcessor puts proc, an equaliser, in the output path of everything the
+// player plays; nil takes it out. See audio.Engine.SetProcessor.
+func (p *Player) SetProcessor(proc audio.Processor) { p.engine.SetProcessor(proc) }

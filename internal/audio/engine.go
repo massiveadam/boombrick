@@ -3,6 +3,7 @@ package audio
 import (
 	"errors"
 	"io"
+	"runtime"
 	"sync"
 	"time"
 
@@ -11,6 +12,20 @@ import (
 
 // OutputRate is the rate the device runs at; every source is resampled to it.
 const OutputRate = 48000
+
+// closeTimeout is how long Close waits for the loop to release the device.
+const closeTimeout = 2 * time.Second
+
+// Processor changes the output audio in place: interleaved stereo float32
+// frames at rate Hz, after resampling and before fades and the conversion to
+// 16-bit, which is where an equaliser goes. Process and Reset are called only
+// from the engine's playback goroutine. *peq.Processor is one.
+type Processor interface {
+	Process(buf []float32, rate int)
+	// Reset forgets the audio before, as playback jumps: a seek, or a new
+	// source that doesn't follow on without a gap.
+	Reset()
+}
 
 const (
 	// chunk is how many source frames each read carries: about 21 ms at 48 kHz.
@@ -82,6 +97,7 @@ type Engine struct {
 	release  chan struct{} // closed once the loop has let go of the output; nil when none is asked for
 	closed   bool
 	st       Status
+	proc     Processor // nil: none
 
 	// Ends wait in a FIFO for a notifier goroutine, so onEnd sees them in the
 	// order they happened and the loop never blocks on it.
@@ -218,6 +234,11 @@ func (e *Engine) Queue(src Source) {
 // Stop stops playback.
 func (e *Engine) Stop() { e.Play(nil) }
 
+// SetProcessor puts p in the output path, from the next chunk on; nil takes
+// any out. Both the foreground and the background player play through the
+// engine, so a processor set on each applies to all their playback.
+func (e *Engine) SetProcessor(p Processor) { e.set(func() { e.proc = p }) }
+
 // Pause holds playback. What the device still held is played again on Resume.
 // A FadeOut under way ends.
 func (e *Engine) Pause() { e.set(func() { e.paused, e.fadeOut = true, fadeOut{} }) }
@@ -294,12 +315,25 @@ func (e *Engine) Status() Status {
 // Close stops the goroutine, closes any source and closes the output.
 func (e *Engine) Close() error {
 	e.set(func() { e.closed = true })
-	<-e.done
+	// The loop closes the output itself, on its own thread. If the device
+	// wedged inside a call, don't hold up quitting for it.
+	select {
+	case <-e.done:
+	case <-time.After(closeTimeout):
+		return errors.New("audio: output did not close")
+	}
 	return e.out.Close()
 }
 
 func (e *Engine) loop() {
 	defer close(e.done)
+	// Every call into the device stays on this one OS thread, the one that
+	// opens and closes it. Go moves a goroutine between threads from call to
+	// call, and bluealsa's plugin, which keeps an I/O thread of its own per
+	// stream, then wedges in a write or a close: Bluetooth headphones show
+	// as connected and stay silent. (From upstream PR #5, by dmaglio.)
+	runtime.LockOSThread()
+	defer e.out.Close()
 	defer func() {
 		e.nmu.Lock()
 		e.stopped = true
@@ -331,8 +365,12 @@ func (e *Engine) loop() {
 			if cur != nil {
 				e.st.Frames, e.st.Rate = cur.Frames(), cur.SampleRate()
 			}
+			proc := e.proc
 			e.mu.Unlock()
 			rs.Reset()
+			if proc != nil {
+				proc.Reset()
+			}
 			hist.clear()
 			// A source that ended has already left the device to play out;
 			// only an interrupted one is cut off. One handed over again is
@@ -345,11 +383,14 @@ func (e *Engine) loop() {
 			}
 			continue
 		case e.seek >= 0 && e.cur != nil:
-			cur, frame := e.cur, e.seek
+			cur, frame, proc := e.cur, e.seek, e.proc
 			e.seek, e.replay, e.back = -1, 0, 0
 			e.mu.Unlock()
 			err := cur.SeekFrame(frame)
 			rs.Reset()
+			if proc != nil {
+				proc.Reset()
+			}
 			hist.clear()
 			e.drop()
 			if err == nil {
@@ -395,7 +436,7 @@ func (e *Engine) loop() {
 			continue
 		}
 		cur, rate, replay, back := e.cur, e.st.Rate, e.replay, e.back
-		frame, fo, fe := e.st.Frame, e.fadeOut, e.fadeEnd
+		frame, fo, fe, proc := e.st.Frame, e.fadeOut, e.fadeEnd, e.proc
 		e.replay, e.back, e.quiet = 0, 0, false
 		e.mu.Unlock()
 
@@ -425,6 +466,9 @@ func (e *Engine) loop() {
 				fadeTail(in[:2*n], frame, cur.Frames(), fe.frames)
 			}
 			k = rs.Process(rate, OutputRate, in[:2*n], out)
+			if proc != nil {
+				proc.Process(out[:2*k], OutputRate)
+			}
 			if fo.total > 0 {
 				fadeDown(out[:2*k], fo)
 			}
