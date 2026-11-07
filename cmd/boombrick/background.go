@@ -27,6 +27,7 @@ import (
 // are skipped.
 func runBackground() error {
 	started := time.Now()
+	backgroundMode = true
 	debug.SetMemoryLimit(48 << 20)
 	ready := background.Readier() // before anything is started that could inherit it
 	closeInherited()
@@ -74,6 +75,13 @@ func runBackground() error {
 		log.Info("streaming", "notice", int(n.Kind))
 	})
 	defer p.Close()
+	// The same equaliser as in the foreground, from the files it wrote.
+	if eq, err := openEQ(paths); err != nil {
+		log.Warn("open the equaliser", "err", err)
+	} else {
+		p.SetProcessor(eq.Processor())
+		log.Info("equaliser", "profile", eq.Name(), "bypassed", eq.Bypassed())
+	}
 
 	snap, ok, err := resume.Load(db.DB)
 	if err != nil {

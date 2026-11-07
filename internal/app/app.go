@@ -25,6 +25,7 @@ import (
 	"github.com/ujjwal313/boombrick/internal/screens"
 	"github.com/ujjwal313/boombrick/internal/screens/browse"
 	downloadsscreen "github.com/ujjwal313/boombrick/internal/screens/downloads"
+	eqscreen "github.com/ujjwal313/boombrick/internal/screens/eq"
 	"github.com/ujjwal313/boombrick/internal/screens/home"
 	lyricsscreen "github.com/ujjwal313/boombrick/internal/screens/lyrics"
 	"github.com/ujjwal313/boombrick/internal/screens/nowplaying"
@@ -38,6 +39,7 @@ import (
 	"github.com/ujjwal313/boombrick/internal/ui"
 	"github.com/ujjwal313/boombrick/internal/ui/gfx"
 	"github.com/ujjwal313/boombrick/internal/ui/text"
+	"github.com/ujjwal313/boombrick/internal/ui/widgets"
 )
 
 // Options configure the app.
@@ -128,6 +130,15 @@ type Options struct {
 	// it plays; the app then quits. Without it the quick menu has no Play in
 	// background.
 	Background func() error
+	// Offline leaves Spotify, YouTube and Downloads out of the tab row, as
+	// the offline build has none of them.
+	Offline bool
+	// EQ is the equaliser the quick menu's Equalizer opens. Without it the
+	// row never shows.
+	EQ eqscreen.Source
+	// Script drives the app on a desktop, for tests and screenshots; see
+	// script.go. "" for none.
+	Script string
 }
 
 // Releases is what the app needs from a release checker. *release.Checker
@@ -275,6 +286,9 @@ type App struct {
 
 	mu     sync.Mutex // guards closed against wake and Quit racing Close
 	closed bool
+
+	script chan scriptStep // a desktop script's steps, for the loop
+	shot   string          // where to save the next frame, from a script
 }
 
 // New opens the window and builds the screens.
@@ -410,11 +424,16 @@ func New(opts Options) (*App, error) {
 		a.forward(opts.Spotify.Ready(), &a.spotified)
 		opts.Spotify.Saved() // reads the playlists kept, for Home, without starting the helper
 	}
-	a.shell = newShell(a.home,
-		a.library,
-		spTab,
-		ytTab,
-		dlTab)
+	if opts.Offline {
+		widgets.SetOffline()
+		a.shell = newShell(a.home, a.library)
+	} else {
+		a.shell = newShell(a.home,
+			a.library,
+			spTab,
+			ytTab,
+			dlTab)
+	}
 	if a.expired != nil {
 		a.shell.alert = a.expired
 	}
@@ -423,6 +442,14 @@ func New(opts Options) (*App, error) {
 		a.forward(opts.Lyrics.Ready(), &a.redraw)
 	}
 	a.shell.menu = a.quickMenu()
+	if opts.Script != "" {
+		steps, err := parseScript(opts.Script)
+		if err != nil {
+			return nil, err
+		}
+		a.script = make(chan scriptStep, len(steps)+1) // never blocks: the loop may be asleep
+		go a.runScript(steps)
+	}
 	return a, nil
 }
 
@@ -433,6 +460,10 @@ func (a *App) quickMenu() *quickmenu.Menu {
 	act.Playing = func() bool { return a.last.Playing }
 	if a.opts.Background != nil {
 		act.PlayInBackground = a.playInBackground
+	}
+	if a.opts.EQ != nil {
+		at := a.shell.add(overlay{button: input.None, screen: eqscreen.New(a.opts.EQ, a.Toast)})
+		act.OpenEQ = func() { a.shell.openOverlay(at, time.Now()) }
 	}
 	if a.opts.Prefs != nil {
 		o := settingsscreen.Options{Prefs: a.opts.Prefs, Player: a.opts.Player, Card: a.card, Toast: a.Toast,
@@ -597,6 +628,9 @@ func (a *App) Run() error {
 // poll picks up loaded data, the end of a library scan, the device status and
 // player changes that show on screen.
 func (a *App) poll() {
+	if a.script != nil {
+		a.scriptNews()
+	}
 	a.volumeNews(time.Now())
 	a.fontNews()
 	select {
@@ -804,6 +838,9 @@ func (a *App) draw(now time.Time) {
 	a.ui.BeginFrame(now)
 	a.ui.Accent, a.ui.Fade = a.fade.at(now)
 	a.shell.draw(a.ui)
+	if a.shot != "" {
+		a.saveShot()
+	}
 	if a.opts.Perf == nil {
 		a.ui.Canvas.Present()
 		return

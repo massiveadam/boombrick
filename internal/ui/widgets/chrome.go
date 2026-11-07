@@ -20,8 +20,13 @@ const (
 	HintsHeight  = 56
 )
 
-// TabNames are the top-level tabs in order.
-var TabNames = [...]string{"Home", "Library", "Spotify", "YouTube", "Downloads"}
+// TabNames are the top-level tabs in order. The offline build shows only the
+// first two; see SetOffline.
+var TabNames = []string{"Home", "Library", "Spotify", "YouTube", "Downloads"}
+
+// SetOffline leaves only Home and the Library in the tab row, as the offline
+// build has no Spotify, YouTube Music or downloads.
+func SetOffline() { TabNames = TabNames[:2] }
 
 // maxDeviceName is the most room the Bluetooth device's name takes in the
 // status bar.

@@ -100,7 +100,13 @@ func Detect(dir string) Profile {
 			ReleaseAsset: "Boombrick.pak.zip", ReleaseDir: "Tools/tg5040/Boombrick.pak/", Launcher: "launch.sh"}
 	}
 	base := envOr("BOOMBRICK_DATA", filepath.Join("dist", "desktop", "data"))
-	return Profile{Firmware: Desktop, tmp: tmpDir(), Paths: Paths{Data: base, Logs: base, Music: filepath.Join(base, "Music")}}
+	// $BOOMBRICK_MUSIC picks another music folder; a link to one is followed,
+	// as the scan doesn't follow links.
+	music := envOr("BOOMBRICK_MUSIC", filepath.Join(base, "Music"))
+	if real, err := filepath.EvalSymlinks(music); err == nil {
+		music = real
+	}
+	return Profile{Firmware: Desktop, tmp: tmpDir(), Paths: Paths{Data: base, Logs: base, Music: music}}
 }
 
 func envOr(key, def string) string {
