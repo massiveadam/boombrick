@@ -3,3 +3,4 @@
 *.out
 *.actual.png
 testdata/
+__pycache__/
