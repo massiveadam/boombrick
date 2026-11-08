@@ -15,12 +15,11 @@ const (
 	ContentBot = theme.ScreenH - widgets.HintsHeight
 	Side       = 32
 	Pad        = 14 // room above a list or grid for the focus ring
-	// The album grid: three 212 px cards, 36 apart across and 28 down,
-	// centred on the canvas.
-	GridArt  = 212
-	GridGapX = 36
+	// The album grid: GridCols cards GridArt wide, GridGapX apart across and
+	// 28 down, centred on the canvas. The columns, size and gap are the
+	// device's (grid_brick.go, grid_rgsp.go).
 	GridGapY = 28
-	GridX    = (theme.ScreenW - 3*GridArt - 2*GridGapX) / 2
+	GridX    = (theme.ScreenW - GridCols*GridArt - (GridCols-1)*GridGapX) / 2
 	// An album's page: its art in a column on the left with its details and
 	// pills at the column's foot, the tracks on the right.
 	PageArt   = 200
@@ -43,7 +42,7 @@ func Below(y float32) gfx.Rect { return gfx.Rect{X: 0, Y: y, W: theme.ScreenW, H
 // AlbumGrid is the grid of album cards; LayoutGrid fills in what depends on
 // the fonts.
 func AlbumGrid() views.Grid {
-	return views.Grid{Cols: 3, CellW: GridArt, GapX: GridGapX, GapY: GridGapY, Pad: Pad}
+	return views.Grid{Cols: GridCols, CellW: GridArt, GapX: GridGapX, GapY: GridGapY, Pad: Pad}
 }
 
 // LayoutGrid sizes g's cards and view.

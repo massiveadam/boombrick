@@ -235,7 +235,7 @@ func TestResultHintsFit(t *testing.T) {
 			if w := widgets.HintsWidth(u, h); w > widgets.MaxHintsWidth {
 				t.Errorf("kind %d: hints %v are %v wide", it.Kind, h, w)
 			}
-			if dl != nil && it.Kind == ytmusic.SongItem && !slices.Equal(keys(h), []string{"A", "X", "Y", "L2/R2"}) {
+			if theme.Brick && dl != nil && it.Kind == ytmusic.SongItem && !slices.Equal(keys(h), []string{"A", "X", "Y", "L2/R2"}) {
 				t.Errorf("a song's hints are %v", h)
 			}
 			r.Handle(press(input.Down), t0)

@@ -7,6 +7,7 @@ import (
 	"github.com/ujjwal313/boombrick/internal/media"
 	"github.com/ujjwal313/boombrick/internal/platform/input"
 	"github.com/ujjwal313/boombrick/internal/screens"
+	"github.com/ujjwal313/boombrick/internal/theme"
 	"github.com/ujjwal313/boombrick/internal/ui"
 	"github.com/ujjwal313/boombrick/internal/ui/anim"
 	"github.com/ujjwal313/boombrick/internal/ui/uitest"
@@ -164,7 +165,7 @@ func TestTopResultHintsFit(t *testing.T) {
 			if w := widgets.HintsWidth(u, h); w > widgets.MaxHintsWidth || len(h) == 0 {
 				t.Errorf("row %d: hints %v are %v wide", i, h, w)
 			}
-			if dl != nil && s.shown[i].Kind == ytmusic.SongItem && !slices.Equal(keys(h), []string{"A", "X", "Y", "B"}) {
+			if theme.Brick && dl != nil && s.shown[i].Kind == ytmusic.SongItem && !slices.Equal(keys(h), []string{"A", "X", "Y", "B"}) {
 				t.Errorf("a song's hints are %v", h)
 			}
 			s.Handle(press(input.Down), t0)

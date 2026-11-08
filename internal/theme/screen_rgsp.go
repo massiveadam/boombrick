@@ -11,4 +11,5 @@ const (
 	DeviceW = 720
 	DeviceH = 480
 	Scale   = 480.0 / 614.4
+	Brick   = false
 )

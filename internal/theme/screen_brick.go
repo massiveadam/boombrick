@@ -8,4 +8,7 @@ const (
 	DeviceW = 1024
 	DeviceH = 768
 	Scale   = 1.25
+	// Brick is true on the Brick's screen, for tests whose expectations are
+	// its widths.
+	Brick = true
 )

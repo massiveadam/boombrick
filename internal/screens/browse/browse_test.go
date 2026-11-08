@@ -302,6 +302,9 @@ func TestLibraryHidesGenresWithoutTags(t *testing.T) {
 // When the filters' counts don't all fit, only the chosen filter shows its
 // count.
 func TestLibraryCountsThatDontFit(t *testing.T) {
+	if !theme.Brick {
+		t.Skip("the counts are made too wide for the Brick's canvas; wider screens fit them")
+	}
 	var albums []library.Album
 	for i := range 1000 {
 		a := library.Album{Artist: fmt.Sprintf("Artist %d", i%100), Title: fmt.Sprintf("Album %d", i)}
