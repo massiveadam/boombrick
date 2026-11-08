@@ -330,7 +330,11 @@ func (m *Manager) Import(path string) (string, []Warning, error) {
 		return "", warns, err
 	}
 	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	name = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(name), "ParametricEQ"))
+	// AutoEq names its files "<model> ParametricEQ.txt", squiglink
+	// "<model> Filters.txt": the preset is the model.
+	for _, suffix := range []string{"ParametricEQ", "Filters"} {
+		name = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(name), suffix))
+	}
 	name = CleanName(name)
 	if name == "" {
 		name = m.NewPresetName()

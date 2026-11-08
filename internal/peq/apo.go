@@ -30,7 +30,9 @@ var cornerSlope = regexp.MustCompile(`^(?i)(6|12)db$`)
 //
 // It reads Preamp (summed, as APO does) and Filter lines of types PK, PEQ,
 // Modal, LP, LPQ, HP, HPQ, LS, LSC, HS and HSC, with Fc, Gain, and Q or
-// "BW Oct". Shelves take a Q or a slope in dB per octave ("LSC 12 dB");
+// "BW Oct". That covers AutoEq's ParametricEQ.txt and squiglink's "Export"
+// (its "<model> Filters.txt", which writes LSC and HSC); squiglink's own
+// LSQ and HSQ are read as LSC and HSC. Shelves take a Q or a slope in dB per octave ("LSC 12 dB");
 // with neither, a Q of 0.7071 is assumed and a warning given. Filters
 // switched OFF are kept, off.
 //
@@ -170,9 +172,9 @@ func parseFilter(s string) (Filter, string, bool) {
 		f.Kind = LowPass
 	case "HP", "HPQ":
 		f.Kind = HighPass
-	case "LS", "LSC":
+	case "LS", "LSC", "LSQ": // LSQ, HSQ: squiglink's own names for LSC, HSC
 		f.Kind, shelf = LowShelf, true
-	case "HS", "HSC":
+	case "HS", "HSC", "HSQ":
 		f.Kind, shelf = HighShelf, true
 	default:
 		return Filter{}, fmt.Sprintf("filter type %s isn't supported, ignored", typ), false
