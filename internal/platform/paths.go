@@ -20,6 +20,9 @@ const (
 	NextUI
 	CrossMix
 	Knulli
+	// RGSP is the Anbernic RG SP under BaseOS, started from plorpOS's Ports
+	// shelf.
+	RGSP
 )
 
 func (f Firmware) String() string {
@@ -30,6 +33,8 @@ func (f Firmware) String() string {
 		return "CrossMix"
 	case Knulli:
 		return "Knulli"
+	case RGSP:
+		return "RG SP"
 	}
 	return "desktop"
 }
@@ -76,6 +81,21 @@ func Detect(dir string) Profile {
 			},
 			ReleaseAsset: "Boombrick-Knulli.zip", ReleaseDir: "roms/ports/boombrick/", Launcher: "launch"}
 	}
+	if os.Getenv("BOOMBRICK_PLATFORM") == "rgsp" {
+		// Roms/Ports/boombrick on plorpOS's card; the music is the card's
+		// Music folder, which plorpOS's own player reads too. The card's mount
+		// point is plorpOS's (sd/h700/portmaster/pm-run.sh).
+		if dir == "" {
+			dir = "/mnt/SDCARD/Roms/Ports/boombrick"
+		}
+		return Profile{Firmware: RGSP, tmp: tmpDir(),
+			Paths: Paths{
+				Data:     filepath.Join(dir, "data"),
+				Logs:     filepath.Join(dir, "logs"),
+				Music:    filepath.Join(envOr("SDCARD_PATH", "/mnt/SDCARD"), "Music"),
+				OnDevice: true,
+			}}
+	}
 	if os.Getenv("BOOMBRICK_PLATFORM") == "crossmix" {
 		if dir == "" {
 			dir = "/mnt/SDCARD/Apps/Boombrick"
@@ -100,7 +120,13 @@ func Detect(dir string) Profile {
 			ReleaseAsset: "Boombrick.pak.zip", ReleaseDir: "Tools/tg5040/Boombrick.pak/", Launcher: "launch.sh"}
 	}
 	base := envOr("BOOMBRICK_DATA", filepath.Join("dist", "desktop", "data"))
-	return Profile{Firmware: Desktop, tmp: tmpDir(), Paths: Paths{Data: base, Logs: base, Music: filepath.Join(base, "Music")}}
+	// $BOOMBRICK_MUSIC picks another music folder; a link to one is followed,
+	// as the scan doesn't follow links.
+	music := envOr("BOOMBRICK_MUSIC", filepath.Join(base, "Music"))
+	if real, err := filepath.EvalSymlinks(music); err == nil {
+		music = real
+	}
+	return Profile{Firmware: Desktop, tmp: tmpDir(), Paths: Paths{Data: base, Logs: base, Music: music}}
 }
 
 func envOr(key, def string) string {
@@ -141,6 +167,9 @@ func (p Profile) StayAwake() string {
 // game controllers, by the mapping it gives each port, which names the
 // buttons by place unless its Xbox layout for ports is switched on.
 func (p Profile) Pads() input.Layout {
+	if p.Firmware == RGSP {
+		return input.Layout{Joystick: input.RGSPJoystick}
+	}
 	if p.Firmware != Knulli {
 		return input.Layout{}
 	}
@@ -150,7 +179,15 @@ func (p Profile) Pads() input.Layout {
 
 // FirmwarePower reports whether the firmware keeps Power for itself, as
 // Knulli suspends with it and shuts down when it is held.
-func (p Profile) FirmwarePower() bool { return p.Firmware == Knulli }
+func (p Profile) FirmwarePower() bool { return p.Firmware == Knulli || p.Firmware == RGSP }
+
+// Device is the handheld's name, shown at the foot of Settings.
+func (p Profile) Device() string {
+	if p.Firmware == RGSP {
+		return "Anbernic RG SP"
+	}
+	return "TrimUI Brick"
+}
 
 // QuitChord reports whether Start pressed with Menu held quits, as Knulli's
 // ports quit with Function, the Brick's Menu, and Start.

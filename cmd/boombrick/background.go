@@ -27,12 +27,14 @@ import (
 // are skipped.
 func runBackground() error {
 	started := time.Now()
+	backgroundMode = true
 	debug.SetMemoryLimit(48 << 20)
 	ready := background.Readier() // before anything is started that could inherit it
 	closeInherited()
 	signal.Ignore(syscall.SIGHUP)
 	dir := programDir()
 	prof := platform.Detect(dir)
+	firmware = prof.Firmware
 	paths := prof.Paths
 	logPath := filepath.Join(paths.Logs, "Boombrick.txt")
 	logFile, err := logx.Open(logPath, 1<<20, 1)
@@ -74,6 +76,13 @@ func runBackground() error {
 		log.Info("streaming", "notice", int(n.Kind))
 	})
 	defer p.Close()
+	// The same equaliser as in the foreground, from the files it wrote.
+	if eq, err := openEQ(paths); err != nil {
+		log.Warn("open the equaliser", "err", err)
+	} else {
+		p.SetProcessor(eq.Processor())
+		log.Info("equaliser", "profile", eq.Name(), "bypassed", eq.Bypassed())
+	}
 
 	snap, ok, err := resume.Load(db.DB)
 	if err != nil {

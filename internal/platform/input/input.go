@@ -66,4 +66,22 @@ type Layout struct {
 	Controllers bool
 	// Labelled is Mapper.Labelled.
 	Labelled bool
+	// Joystick is how the joystick's buttons are numbered.
+	Joystick Joystick
+}
+
+// Joystick names a numbering of a built-in gamepad's buttons.
+type Joystick uint8
+
+const (
+	BrickJoystick Joystick = iota // NextUI's tg5040 numbering
+	RGSPJoystick                  // see RGSPButtons
+)
+
+// Buttons is the numbering's map, for Mapper.Buttons; nil for the Brick's.
+func (j Joystick) Buttons() map[uint8]Button {
+	if j == RGSPJoystick {
+		return RGSPButtons
+	}
+	return nil
 }

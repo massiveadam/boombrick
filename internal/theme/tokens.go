@@ -32,14 +32,9 @@ func PaperA(a float64) color.NRGBA {
 	return c
 }
 
-// Screen size in device pixels.
-const (
-	DeviceW = 1024
-	DeviceH = 768
-)
-
-// Scale is how many device pixels one design pixel covers.
-const Scale = 1.25
+// DeviceW, DeviceH and Scale, the screen's size in device pixels and how many
+// device pixels one design pixel covers, are set per device by build tag:
+// screen_brick.go and screen_rgsp.go.
 
 // Canvas size in design pixels, the unit every layout uses.
 const (

@@ -226,13 +226,14 @@ func TestQueueDrawsAtTheShellsAlpha(t *testing.T) {
 		// Paper text at 30 % over the ground comes to about 90 in red, or a
 		// little more over the glow at the top left; drawn whole it is 243.
 		img := off.Image()
-		heading := int(q.listTop*theme.Scale) - 50
-		hints := theme.DeviceH - int(widgets.HintsHeight*theme.Scale)
+		scale := float32(theme.Scale) // at run time: off the Brick it isn't a whole number of pixels
+		heading := int(q.listTop*scale) - 50
+		hints := theme.DeviceH - int(float32(widgets.HintsHeight)*scale)
 		for _, part := range []struct {
 			name string
 			r    image.Rectangle
 		}{
-			{"title and panel", image.Rect(0, int(widgets.StatusHeight*theme.Scale), theme.DeviceW, heading)},
+			{"title and panel", image.Rect(0, int(float32(widgets.StatusHeight)*scale), theme.DeviceW, heading)},
 			{"heading and rows", image.Rect(0, heading, theme.DeviceW, hints)},
 			{"hint bar", image.Rect(0, hints, theme.DeviceW, theme.DeviceH)},
 		} {

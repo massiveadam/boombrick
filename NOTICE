@@ -65,3 +65,20 @@ The font licences (OFL-*.txt) are in assets/fonts/ in the source tree and
 next to this file in the pak. The other licences are in full in
 THIRD-PARTY.txt, next to this file in the pak, which scripts/licenses.sh makes
 from the modules built in and third_party/licenses/.
+
+This fork (the rgsp branch) changes Boombrick: a parametric equaliser
+(internal/peq), build tags that leave streaming, online lookups and upstream
+updates out by default (internal/features), an Anbernic RG SP build
+(build/rgsp, the rgsp tag, the rgsp platform profile) and rgsp-sync. Its
+changes are GPL-3.0, as Boombrick is; git history records each. The RG SP
+build also uses, from plorpOS (https://github.com/thwonp/plorpOS):
+
+  SDL2 2.30.8                  zlib                  https://libsdl.org, built with plorpOS's
+                               mk/patches/sdl2-h700.patch (zlib), shipped as lib/ with it
+  RG SP button numbering       MIT                   plorpOS src/platform_h700.c
+  Toolchain recipe             MIT                   plorpOS mk/toolchain.Dockerfile
+  libopus, libogg              BSD-3-Clause          Debian bullseye arm64, shipped in lib/
+
+Tailscale-RGSP.zip, optional, holds Tailscale's own static build:
+
+  Tailscale 1.104.5            BSD-3-Clause          https://tailscale.com (tailscale/LICENSE)

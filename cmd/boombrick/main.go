@@ -22,6 +22,7 @@ import (
 	"github.com/ujjwal313/boombrick/internal/audio/decode"
 	"github.com/ujjwal313/boombrick/internal/background"
 	"github.com/ujjwal313/boombrick/internal/download"
+	"github.com/ujjwal313/boombrick/internal/features"
 	"github.com/ujjwal313/boombrick/internal/fonts"
 	"github.com/ujjwal313/boombrick/internal/importer"
 	"github.com/ujjwal313/boombrick/internal/library"
@@ -55,7 +56,12 @@ func main() {
 	started := time.Now()
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	inBackground := flag.Bool("background", false, "play the saved queue with no screen until stopped, as Play in background starts it")
+	music := flag.String("music", "", "desktop only: the music folder to play, instead of $BOOMBRICK_DATA/Music")
 	flag.Parse()
+	if *music != "" {
+		os.Setenv("BOOMBRICK_MUSIC", *music) // the background player inherits it
+	}
+	defer finishCaptures()
 	if *showVersion {
 		fmt.Println(version.String())
 		return
@@ -78,6 +84,7 @@ func run(started time.Time) error {
 	// updates are staged in; on CrossMix and Knulli, Boombrick's data too.
 	dir := programDir()
 	prof := platform.Detect(dir)
+	firmware = prof.Firmware
 	paths := prof.Paths
 	for _, d := range []string{paths.Data, paths.Logs} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -124,11 +131,18 @@ func run(started time.Time) error {
 	// music is looked up online while the device is. They close after the
 	// player, so the music stops at once on quitting, and before the database.
 	web := netx.NewClient()
+	// lookups is whether covers, lyrics and fonts may be fetched online. In
+	// the offline build (features.NetLookups off) it is never: they come
+	// only from the files and folders on the card.
+	lookups := online
+	if !features.NetLookups {
+		lookups = func() bool { return false }
+	}
 	covers := art.New(art.Options{
 		DB:     db.DB,
 		Dir:    filepath.Join(paths.Data, "cache", "art"),
 		Lookup: art.NewLookup(web),
-		Online: online,
+		Online: lookups,
 		Log:    log,
 	})
 	defer covers.Close()
@@ -142,7 +156,7 @@ func run(started time.Time) error {
 	}
 	fontStore := fonts.New(fonts.Options{Dir: filepath.Join(fontsDir, text.FontsRelease), HTTP: web,
 		Base:  fonts.Release(text.FontsRelease),
-		Fonts: text.Catalog, Online: online, Log: log})
+		Fonts: text.Catalog, Online: lookups, Log: log})
 	defer fontStore.Close()
 	needs, err := text.NewNeeds(assets.Fonts(), text.Catalog)
 	if err != nil {
@@ -155,7 +169,7 @@ func run(started time.Time) error {
 			}
 		}
 	}
-	words := lyrics.New(lyrics.Options{DB: db.DB, Fetch: lyrics.NewClient(web), Online: online, Log: log,
+	words := lyrics.New(lyrics.Options{DB: db.DB, Fetch: lyrics.NewClient(web), Online: lookups, Log: log,
 		FileOf: func(id string) (string, bool) {
 			path, ok, err := library.FileOf(db.DB, id)
 			return path, ok && err == nil
@@ -168,34 +182,46 @@ func run(started time.Time) error {
 	defer words.Close()
 	// YouTube Music is asked, its thumbnails fetched and its songs downloaded
 	// off the UI thread too. The searcher falls back to yt-dlp's search.
-	thumbs := art.NewWeb(web, online, log)
-	defer thumbs.Close()
-	ytc := ytmusic.NewClient(web)
-	qjs := quickJS(dir)
-	dl, err := download.New(download.Options{DB: db.DB, Music: paths.Music, Data: paths.Data, QJS: qjs,
-		HTTP: web, Albums: ytc, Lyrics: lyrics.NewClient(web), Formats: formats, Online: online,
-		Quality: func() string { return prefs.String(settings.DownloadQuality) }, Log: log})
-	if err != nil {
-		return err
+	// None of it exists in the offline build (features.Streaming off).
+	var (
+		thumbs *art.Web
+		dl     *download.Service
+		yt     *ytmusic.Searcher
+		im     *importer.Importer
+	)
+	if features.Streaming {
+		thumbs = art.NewWeb(web, online, log)
+		defer thumbs.Close()
+		ytc := ytmusic.NewClient(web)
+		qjs := quickJS(dir)
+		dl, err = download.New(download.Options{DB: db.DB, Music: paths.Music, Data: paths.Data, QJS: qjs,
+			HTTP: web, Albums: ytc, Lyrics: lyrics.NewClient(web), Formats: formats, Online: online,
+			Quality: func() string { return prefs.String(settings.DownloadQuality) }, Log: log})
+		if err != nil {
+			return err
+		}
+		defer dl.Close()
+		log.Info("downloads", "qjs", qjs != "")
+		yt = ytmusic.NewSearcher(ytmusic.Options{Client: ytc, Online: online, Log: log, Fallback: dl.Search})
+		defer yt.Close()
+		// Spotify playlists are imported by matching their songs on YouTube
+		// Music, a search a second, and downloading the matches. The importer
+		// closes before the queue it fills.
+		im, err = importer.New(importer.Options{DB: db.DB, Search: ytc.Search, Get: dl.Get, State: dl.State,
+			Remove: dl.Remove, Online: online, Log: log})
+		if err != nil {
+			return err
+		}
+		defer im.Close()
 	}
-	defer dl.Close()
-	log.Info("downloads", "qjs", qjs != "")
-	yt := ytmusic.NewSearcher(ytmusic.Options{Client: ytc, Online: online, Log: log, Fallback: dl.Search})
-	defer yt.Close()
-	// Spotify playlists are imported by matching their songs on YouTube
-	// Music, a search a second, and downloading the matches. The importer
-	// closes before the queue it fills.
-	im, err := importer.New(importer.Options{DB: db.DB, Search: ytc.Search, Get: dl.Get, State: dl.State,
-		Remove: dl.Remove, Online: online, Log: log})
-	if err != nil {
-		return err
-	}
-	defer im.Close()
 	// Settings' Storage page measures and clears the caches off the UI
 	// thread; the meter closes before the caches it reaches into.
-	meter := space.New(space.Options{Art: covers, Lyrics: words, Fonts: fontStore,
-		Parts:      space.Funcs{SizeOf: dl.Leftovers, Empty: dl.ClearLeftovers},
-		Downloader: filepath.Join(paths.Data, "bin"), Log: log})
+	spaceOpts := space.Options{Art: covers, Lyrics: words, Fonts: fontStore, Log: log}
+	if dl != nil {
+		spaceOpts.Parts = space.Funcs{SizeOf: dl.Leftovers, Empty: dl.ClearLeftovers}
+		spaceOpts.Downloader = filepath.Join(paths.Data, "bin")
+	}
+	meter := space.New(spaceOpts)
 	defer meter.Close()
 	// The status bar names the Bluetooth headphones or speaker connected,
 	// asking BlueZ on the status reader's goroutine.
@@ -212,25 +238,34 @@ func run(started time.Time) error {
 	// GitHub at most every 6 hours while it is open. On the Brick, Update
 	// Boombrick stages a release in the pak's folder, for launch.sh to move
 	// in on the next launch.
-	toolReleases := release.NewChecker(web, "yt-dlp/yt-dlp", online, releaseEvery, log)
-	defer toolReleases.Close()
-	releases := release.NewChecker(web, "ujjwal313/boombrick", online, releaseEvery, log)
-	defer releases.Close()
+	// This fork offers neither: upstream's releases would replace it.
+	var toolReleases, releases *release.Checker
 	var updater app.Updater
-	if paths.OnDevice && dir != "" {
-		up := selfupdate.New(web, dir, selfupdate.Pak{Asset: prof.ReleaseAsset, Dir: prof.ReleaseDir, Launcher: prof.Launcher}, log)
-		defer up.Close()
-		updater = up
+	if features.Streaming {
+		toolReleases = release.NewChecker(web, "yt-dlp/yt-dlp", online, releaseEvery, log)
+		defer toolReleases.Close()
+	}
+	if features.UpstreamUpdates {
+		releases = release.NewChecker(web, "ujjwal313/boombrick", online, releaseEvery, log)
+		defer releases.Close()
+		if paths.OnDevice && dir != "" {
+			up := selfupdate.New(web, dir, selfupdate.Pak{Asset: prof.ReleaseAsset, Dir: prof.ReleaseDir, Launcher: prof.Launcher}, log)
+			defer up.Close()
+			updater = up
+		}
 	}
 
 	// Spotify runs in its helper, started the first time a Spotify song is
-	// played; it stops after the player.
-	sp := newHelper(dir, paths, log, logOut)
-	defer sp.Close()
-	// The library the Spotify screens ask, kept in the database; it stops
-	// before the helper.
-	spLib := spotify.NewLibrary(sp, db.DB, log)
-	defer spLib.Close()
+	// played; it stops after the player. The library the Spotify screens
+	// ask, kept in the database, stops before the helper.
+	var sp *spotify.Helper
+	var spLib *spotify.Library
+	if features.Streaming {
+		sp = newHelper(dir, paths, log, logOut)
+		defer sp.Close()
+		spLib = spotify.NewLibrary(sp, db.DB, log)
+		defer spLib.Close()
+	}
 
 	notices := make(chan player.Notice, 8)
 	p := newPlayer(db.DB, prefs, sp, online, log, func(n player.Notice) {
@@ -240,6 +275,15 @@ func run(started time.Time) error {
 		}
 	})
 	defer p.Close()
+	// The equaliser runs in the player's output path; it is written out as
+	// Boombrick quits, after the player has stopped.
+	eq, err := openEQ(paths)
+	if err != nil {
+		return err
+	}
+	defer eq.Flush()
+	p.SetProcessor(eq.Processor())
+	log.Info("equaliser", "profile", eq.Name(), "bypassed", eq.Bypassed(), "bands", len(eq.Profile().Filters))
 
 	// A background player gives the music back before the saved queue is
 	// read; neither must hold up the first frame. Every later release keeps
@@ -328,7 +372,9 @@ func run(started time.Time) error {
 					"updated", st.Updated, "removed", st.Removed, "took", time.Since(start).Round(time.Millisecond))
 				changed = st.Added+st.Updated+st.Removed > 0
 				// Downloads whose files were deleted, as on a PC, can be had again.
-				dl.Prune()
+				if dl != nil {
+					dl.Prune()
+				}
 			}
 			tell(app.ScanUpdate{Changed: changed, Ended: true})
 			// The fonts the library's names need, fetched before they show.
@@ -381,9 +427,6 @@ func run(started time.Time) error {
 		},
 		Covers:        covers,
 		Lyrics:        words,
-		Thumbs:        thumbs,
-		YouTube:       yt,
-		Downloads:     dl,
 		Prefs:         prefs,
 		Space:         meter,
 		Backlight:     light,
@@ -393,18 +436,21 @@ func run(started time.Time) error {
 		Pads:          prof.Pads(),
 		Fonts:         fontStore,
 		Version:       version.Version,
-		Device:        "TrimUI Brick",
-		ToolReleases:  toolReleases,
-		Releases:      releases,
+		Device:        prof.Device(),
 		Updater:       updater,
 		Perf:          rec,
 		Notices:       notices,
-		Spotify:       spLib,
-		Importer:      im,
+		Offline:       !features.Streaming,
+		EQ:            eq,
+		Script:        desktopScript(paths.OnDevice),
 		Background: func() error {
 			exe, err := os.Executable()
 			if err != nil {
 				return err
+			}
+			// The background player reads the EQ from its files.
+			if err := eq.Flush(); err != nil {
+				log.Warn("save the equaliser", "err", err)
 			}
 			return gate.handOver(func() error {
 				return background.HandOver(p, gate.now, func(h resume.Handover) error { return resume.SaveHandover(db.DB, h) },
@@ -412,8 +458,18 @@ func run(started time.Time) error {
 			})
 		},
 	}
+	// A nil pointer would make an interface that isn't nil: only what
+	// exists is set.
 	if volume != nil {
-		opts.Volume = volume // a nil *VolumeWatcher would make a Volume that isn't nil
+		opts.Volume = volume
+	}
+	if features.Streaming {
+		opts.Thumbs, opts.YouTube, opts.Downloads = thumbs, yt, dl
+		opts.Spotify, opts.Importer = spLib, im
+		opts.ToolReleases = toolReleases
+	}
+	if releases != nil {
+		opts.Releases = releases
 	}
 	a, err := app.New(opts)
 	if err != nil {
@@ -469,4 +525,13 @@ func quickJS(dir string) string {
 		return ""
 	}
 	return p
+}
+
+// desktopScript is $BOOMBRICK_SCRIPT on a desktop, which drives the app for
+// tests and screenshots; never on a device.
+func desktopScript(onDevice bool) string {
+	if onDevice {
+		return ""
+	}
+	return os.Getenv("BOOMBRICK_SCRIPT")
 }

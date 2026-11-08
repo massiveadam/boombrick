@@ -1,0 +1,5 @@
+# Gentle example: a little extra bass and treble at low volume.
+# A generic example, not tuned for any headphone.
+Preamp: -4 dB
+Filter 1: ON LSC Fc 100 Hz Gain 4 dB Q 0.71
+Filter 2: ON HSC Fc 10000 Hz Gain 2.5 dB Q 0.71

@@ -29,11 +29,14 @@ type Actions struct {
 	// shows.
 	Playing          func() bool
 	PlayInBackground func()
+	// OpenEQ opens the Equalizer; without it the row never shows.
+	OpenEQ func()
 }
 
 // The rows, top to bottom.
 const (
 	rowSleep = iota
+	rowEQ
 	rowScreen
 	rowBackground
 	rowSettings
@@ -69,6 +72,7 @@ func New(act Actions) *Menu {
 	m := &Menu{act: act}
 	m.rows = [rowCount]widgets.Setting{
 		rowSleep:      {Icon: "moon", Label: "Sleep timer"},
+		rowEQ:         {Icon: "sliders", Label: "Equalizer", Chevron: true},
 		rowScreen:     {Icon: "power", Label: "Screen off"},
 		rowBackground: {Icon: "music", Label: "Play in background"},
 		rowSettings:   {Icon: "settings", Label: "Settings", Chevron: true},
@@ -76,6 +80,7 @@ func New(act Actions) *Menu {
 	}
 	m.hints = [rowCount][]widgets.Hint{
 		rowSleep:      {{Key: "◀ ▶", Label: "Change"}, {Key: "B", Label: "Close"}},
+		rowEQ:         {{Key: "A", Label: "Open"}, {Key: "B", Label: "Close"}},
 		rowScreen:     {{Key: "A", Label: "Turn off"}, {Key: "B", Label: "Close"}},
 		rowBackground: {{Key: "A", Label: "Play in background"}, {Key: "B", Label: "Close"}},
 		rowSettings:   {{Key: "A", Label: "Open"}, {Key: "B", Label: "Close"}},
@@ -88,7 +93,10 @@ func New(act Actions) *Menu {
 func (m *Menu) Open(now time.Time) {
 	m.visible = m.visible[:0]
 	for r := range rowCount {
-		if r != rowBackground || m.act.PlayInBackground != nil && m.act.Playing != nil && m.act.Playing() {
+		switch {
+		case r == rowBackground && (m.act.PlayInBackground == nil || m.act.Playing == nil || !m.act.Playing()):
+		case r == rowEQ && m.act.OpenEQ == nil:
+		default:
 			m.visible = append(m.visible, r)
 		}
 	}
@@ -165,6 +173,9 @@ func (m *Menu) do(now time.Time) {
 	switch m.focus {
 	case rowSleep:
 		m.act.SetSleep(screens.NextSleep(m.act.Sleep().Mode, 1))
+	case rowEQ:
+		m.close(now)
+		m.act.OpenEQ()
 	case rowScreen:
 		m.close(now)
 		m.act.ScreenOff()

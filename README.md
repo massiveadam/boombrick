@@ -1,3 +1,15 @@
+<img src="assets/icon.svg" width="64" height="64" alt="">
+
+> **This is a fork for the Anbernic RG SP** (branch `rgsp`, made in
+> [T3 Code](https://t3.codes)). It adds a parametric equaliser in the real
+> playback path (Menu → Equalizer; Equalizer APO / AutoEq presets from the
+> music's `EQ` folder), leaves Spotify, YouTube Music, online lookups and
+> upstream updates out unless built with the tags `streaming`, `netlookups`
+> or `upstreamupdates`, and builds for the RG SP with `make rgsp`
+> (a plorpOS Port; not yet run on the device). Status, and what is and isn't
+> verified: [docs/PORTING_STATUS.md](docs/PORTING_STATUS.md). The rest of
+> this README is upstream's.
+
 # Boombrick
 
 A music player for the [TrimUI Brick](https://trimui.com) running [NextUI](https://github.com/LoveRetro/NextUI), [CrossMix](https://github.com/cizia64/CrossMix-OS) or [Knulli](https://knulli.org). It plays the music on your SD card, streams your Spotify playlists, finds covers and synced lyrics, and downloads songs and albums from YouTube Music for offline listening. Its colours come from the album that's playing.

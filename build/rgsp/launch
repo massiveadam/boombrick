@@ -1,0 +1,22 @@
+#!/bin/sh
+# Starts Boombrick on the Anbernic RG SP, under BaseOS, from plorpOS's Ports
+# shelf. It has no .sh, which would list it on the shelf too. Unlike the
+# Brick's builds there are no self-updates: this fork is installed by hand.
+PAK_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$PAK_DIR" || exit 1
+
+# The SDL2 shipped here first (plorpOS's H700 build: the Mali fbdev driver),
+# then libopus and libogg; libasound is BaseOS's own.
+export LD_LIBRARY_PATH="$PAK_DIR/lib:$LD_LIBRARY_PATH"
+export BOOMBRICK_PLATFORM=rgsp
+mkdir -p logs
+
+# The app writes its own log; this file only catches crashes before logging
+# starts. A signal to this script, as plorpOS sends a port it closes, goes on
+# to Boombrick, which saves the queue as it quits. The background player
+# starts in a session of its own, so closing the port doesn't stop it.
+./boombrick > logs/Boombrick.crash.txt 2>&1 &
+pid=$!
+trap 'kill -TERM "$pid" 2>/dev/null' TERM INT HUP
+wait "$pid"
+wait "$pid" 2>/dev/null # again, when a signal cut the first short

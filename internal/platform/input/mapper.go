@@ -21,6 +21,19 @@ const (
 	scancodePower    = 102 // SDL_SCANCODE_POWER
 )
 
+// RGSPButtons is the Anbernic RG SP's built-in gamepad ("ANBERNIC-keys") as
+// an SDL joystick under BaseOS, with plorpOS's SDL: SDL numbers its evdev
+// buttons from BTN_JOYSTICK up, so b0..b8 are codes 304..312 and b9, b10 are
+// 314, 315. Which code is which button was pressed and logged on an RG SP by
+// plorpOS (src/platform_h700.c, 2026-10-06); X and Y cross their evdev names.
+// The D-pad is hat 0. Not yet checked with Boombrick on the device.
+var RGSPButtons = map[uint8]Button{
+	0: A, 1: B, 2: Y, 3: X,
+	4: L1, 5: R1,
+	6: Select, 7: Start, 8: Menu,
+	9: L2, 10: R2,
+}
+
 // controllerButtons maps SDL's game controller buttons, which are named by
 // place, Xbox style: its A is the bottom face button, the Brick's B.
 var controllerButtons = map[uint8]Button{
@@ -66,13 +79,19 @@ type Mapper struct {
 	// Brick's labels, as Knulli's does for ports with its Xbox layout
 	// switched on, rather than by place.
 	Labelled bool
-	hat      uint8
-	l2, r2   bool
+	// Buttons numbers the joystick's buttons; nil for the Brick's.
+	Buttons map[uint8]Button
+	hat     uint8
+	l2, r2  bool
 }
 
 // JoyButton maps a joystick button.
 func (m *Mapper) JoyButton(button uint8, down bool) []Event {
-	b, ok := brickButtons[button]
+	buttons := brickButtons
+	if m.Buttons != nil {
+		buttons = m.Buttons
+	}
+	b, ok := buttons[button]
 	if !ok {
 		return nil
 	}
