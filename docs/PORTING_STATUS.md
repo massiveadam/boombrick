@@ -353,9 +353,11 @@ When the RG SP arrives: BaseOS on the 64 GB card (TF1), plorpOS on the 256 GB
 card (TF2) as plorpOS documents; unzip `dist/Boombrick-RGSP.zip` (and, if
 wanted, `dist/Tailscale-RGSP.zip`) onto TF2; run **Boombrick Probe** from
 Ports and read `Roms/Ports/boombrick/logs/probe.txt`; then start Boombrick
-and work through the open questions. First fill of the music: copy
-`/srv/media/disk1/rgsp/opus256` to the card's `Music/Library` with a card
-reader on sanchez (about 100 GB; far faster than Wi-Fi), after `rgsp-sync
-manifest` on it, then keep it in step over Wi-Fi with `rgsp-sync pull`.
+and work through the open questions. First fill of the music, with the card in a reader on sanchez (about
+100 GB; far faster than Wi-Fi): `rgsp-sync manifest` on
+`/srv/media/disk1/rgsp/opus256`, then `rgsp-sync pull -from <that folder>
+-manifest <the manifest> -to <card>/Music/Library`. Pull, not a plain copy:
+pull records what it synced on the card, so later pulls over Wi-Fi fetch
+only what changed (a plain copy would be fetched again in full).
 Before then: export the AirPods Pro 2 filters from squiglink into the card's
 `Music/EQ` folder.
