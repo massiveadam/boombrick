@@ -1,7 +1,8 @@
 // Command rgsp-probe reports what Boombrick needs to know about the device
 // it runs on: the screen, C library, sound cards, Bluetooth, input devices,
 // battery, network tools, what Tailscale would need, the card's space, and
-// what the equaliser costs on this CPU. It only reads, and writes the report
+// what the equaliser costs on this CPU, and what a terminal with voice input
+// would have to work with (microphones, USB host mode, kernel features). It only reads, and writes the report
 // to standard output.
 //
 // It is built static, so it runs on BaseOS with nothing else. On the RG SP
@@ -11,6 +12,7 @@ package main
 
 import (
 	"bufio"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"math"
@@ -103,6 +105,8 @@ func report(w io.Writer, root string, bench bool) {
 		}
 	}
 	mounts(w, p("proc/mounts"))
+
+	cyberdeck(w, p)
 
 	if bench {
 		section(w, "Equaliser CPU (48 kHz stereo, 1024-frame chunks)")
@@ -288,4 +292,127 @@ func benchEQ(n int) string {
 	per := time.Since(start) / time.Duration(chunks)
 	share := float64(per) / float64(time.Second*1024/48000) * 100
 	return fmt.Sprintf("%v per chunk, %.2f %% of one core", per.Round(time.Microsecond), share)
+}
+
+// cyberdeck reports what a terminal Port with push-to-talk would need: a
+// microphone, USB host mode for a USB keyboard or mic, Bluetooth HID,
+// memory for an agent CLI, and the kernel features those use.
+func cyberdeck(w io.Writer, p func(string) string) {
+	section(w, "Terminal and voice")
+	var capture []string
+	if b, err := os.ReadFile(p("proc/asound/pcm")); err == nil {
+		for _, l := range strings.Split(string(b), "\n") {
+			if strings.Contains(l, "capture") {
+				capture = append(capture, strings.TrimSpace(l))
+			}
+		}
+	}
+	line(w, "capture PCMs", orNone(strings.Join(capture, "; ")))
+	line(w, "capture devices", orNone(strings.Join(baseNames(globs(p("dev/snd/pcmC*D*c"))), " ")))
+	line(w, "memory available", field(p("proc/meminfo"), "MemAvailable:"))
+	line(w, "swap", field(p("proc/meminfo"), "SwapTotal:"))
+	line(w, "zram", orNone(strings.Join(baseNames(globs(p("sys/block/zram*"))), " ")))
+
+	// USB: host controllers show as root hubs (usb1, usb2...); a gadget
+	// controller in /sys/class/udc means the port can act as a device.
+	line(w, "usb root hubs", orNone(strings.Join(baseNames(globs(p("sys/bus/usb/devices/usb*"))), " ")))
+	line(w, "usb devices", orNone(strings.Join(usbProducts(p), "; ")))
+	line(w, "udc (gadget)", orNone(list(p("sys/class/udc"))))
+	for _, f := range globs(p("sys/class/usb_role/*/role"), p("sys/devices/platform/*/dr_mode"),
+		p("sys/devices/platform/*/*/dr_mode"), p("sys/devices/platform/soc*/usbc0/*role*"),
+		p("sys/devices/platform/soc*/usbc0/usb_host"), p("sys/devices/platform/soc*/usbc0/otg_role")) {
+		line(w, strings.TrimPrefix(f, p("")), first(f))
+	}
+
+	line(w, "bluetooth adapters", orNone(list(p("sys/class/bluetooth"))))
+	line(w, "/dev/uinput", exists(p("dev/uinput"), p("dev/input/uinput")))
+	line(w, "/dev/uhid", exists(p("dev/uhid")))
+	line(w, "max user namespaces", orNone(first(p("proc/sys/user/max_user_namespaces"))))
+	line(w, "LSMs", orNone(first(p("sys/kernel/security/lsm"))))
+	var mods []string
+	if b, err := os.ReadFile(p("proc/modules")); err == nil {
+		for _, l := range strings.Split(string(b), "\n") {
+			name, _, _ := strings.Cut(l, " ")
+			switch name {
+			case "snd_usb_audio", "usbhid", "hidp", "uinput", "uhid", "hid_generic", "btusb", "zram":
+				mods = append(mods, name)
+			}
+		}
+	}
+	line(w, "modules loaded", orNone(strings.Join(mods, " ")))
+	line(w, "modules available", orNone(strings.Join(baseNames(globs(
+		p("lib/modules/*/kernel/sound/usb/snd-usb-audio.ko*"), p("lib/modules/*/kernel/drivers/hid/usbhid/usbhid.ko*"),
+		p("lib/modules/*/kernel/net/bluetooth/hidp/hidp.ko*"), p("lib/modules/*/kernel/drivers/input/misc/uinput.ko*"))), " ")))
+	for _, kv := range kernelConfig(p("proc/config.gz"), "CONFIG_SND_USB_AUDIO", "CONFIG_USB_HID", "CONFIG_BT_HIDP",
+		"CONFIG_INPUT_UINPUT", "CONFIG_UHID", "CONFIG_USB_MUSB_HDRC", "CONFIG_USB_OTG", "CONFIG_USER_NS",
+		"CONFIG_SECURITY_LANDLOCK", "CONFIG_SECCOMP_FILTER", "CONFIG_SWAP", "CONFIG_ZRAM") {
+		line(w, kv[0], kv[1])
+	}
+	for _, t := range []string{"arecord", "tmux", "mosh", "bash", "python3", "git", "sox", "ffmpeg", "node"} {
+		line(w, t, which(t))
+	}
+}
+
+func orNone(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "none"
+	}
+	return s
+}
+
+func baseNames(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		out = append(out, filepath.Base(p))
+	}
+	return out
+}
+
+// usbProducts names the USB devices plugged in, root hubs left out.
+func usbProducts(p func(string) string) []string {
+	var out []string
+	for _, d := range globs(p("sys/bus/usb/devices/*")) {
+		if strings.HasPrefix(filepath.Base(d), "usb") || strings.Contains(filepath.Base(d), ":") {
+			continue
+		}
+		name := first(filepath.Join(d, "product"))
+		if name == "" {
+			name = first(filepath.Join(d, "idVendor")) + ":" + first(filepath.Join(d, "idProduct"))
+		}
+		out = append(out, filepath.Base(d)+" "+name)
+	}
+	return out
+}
+
+// kernelConfig reads the named options from /proc/config.gz: "y", "m",
+// "not set", or "unknown" without the file.
+func kernelConfig(path string, names ...string) [][2]string {
+	vals := map[string]string{}
+	f, err := os.Open(path)
+	if err == nil {
+		defer f.Close()
+		if z, err := gzip.NewReader(f); err == nil {
+			sc := bufio.NewScanner(z)
+			for sc.Scan() {
+				l := sc.Text()
+				if k, v, ok := strings.Cut(l, "="); ok && strings.HasPrefix(k, "CONFIG_") {
+					vals[k] = v
+				} else if strings.HasPrefix(l, "# CONFIG_") && strings.HasSuffix(l, " is not set") {
+					vals[strings.TrimSuffix(strings.TrimPrefix(l, "# "), " is not set")] = "not set"
+				}
+			}
+		}
+	}
+	var out [][2]string
+	for _, n := range names {
+		v, ok := vals[n]
+		switch {
+		case err != nil:
+			v = "unknown (no /proc/config.gz)"
+		case !ok:
+			v = "absent"
+		}
+		out = append(out, [2]string{n, v})
+	}
+	return out
 }

@@ -19,6 +19,11 @@ func TestReport(t *testing.T) {
 		"sys/class/power_supply/axp2202-battery/type":     "Battery\n",
 		"sys/class/power_supply/axp2202-battery/capacity": "81\n",
 		"sys/class/power_supply/axp2202-battery/status":   "Discharging\n",
+		"proc/asound/pcm":                                 "00-00: audiocodec : audiocodec : playback 1 : capture 1\n",
+		"dev/snd/pcmC1D0c":                                "",
+		"sys/bus/usb/devices/usb1/product":                "EHCI Host Controller\n",
+		"sys/bus/usb/devices/1-1/product":                 "USB Audio Mic\n",
+		"proc/modules":                                    "snd_usb_audio 200000 0 - Live 0x0\nother 1 0 - Live 0x0\n",
 		"proc/bus/input/devices":                          "N: Name=\"ANBERNIC-keys\"\nH: Handlers=event1 js0\nB: KEY=1ff\n\nN: Name=\"axp2202-pek\"\nH: Handlers=event0\nB: KEY=100000 0 0 0\n",
 	}
 	for p, c := range files {
@@ -30,7 +35,8 @@ func TestReport(t *testing.T) {
 	report(&b, root, false)
 	out := b.String()
 	for _, want := range []string{"Linux version 4.9.170", "720,960", "audiocodec", "bluealsa:DEV=AA",
-		"axp2202-battery:", "81% Discharging", "ANBERNIC-keys", "event1 js0", "/dev/net/tun:", "no"} {
+		"axp2202-battery:", "81% Discharging", "ANBERNIC-keys", "event1 js0", "/dev/net/tun:", "no",
+		"capture 1", "pcmC1D0c", "usb1", "1-1 USB Audio Mic", "snd_usb_audio", "unknown (no /proc/config.gz)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("report lacks %q", want)
 		}
