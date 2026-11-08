@@ -37,6 +37,7 @@ docker run --rm --user "$(id -u):$(id -g)" \
 	-o dist/rgsp/boombrick ./cmd/boombrick
 CGO_ENABLED=0 /goroot/bin/go build -trimpath -ldflags '-s -w' -o dist/rgsp/rgsp-sync ./cmd/rgsp-sync
 CGO_ENABLED=0 /goroot/bin/go build -trimpath -ldflags '-s -w' -o dist/rgsp/rgsp-probe ./cmd/rgsp-probe
+CGO_ENABLED=0 /goroot/bin/go build -trimpath -ldflags '-s -w' -o dist/rgsp/rgsp-voice ./cmd/rgsp-voice
 # BaseOS is glibc 2.35: nothing may ask for newer.
 for f in dist/rgsp/boombrick \$(readlink -f /sysroot/usr/lib/libSDL2-2.0.so.0); do
 	if aarch64-linux-gnu-objdump -T \"\$f\" | grep -qE 'GLIBC_2\.(3[6-9]|[4-9][0-9])'; then
@@ -54,11 +55,11 @@ rm -rf dist/rgsp-port
 mkdir -p "$APP/bin" "$APP/lib"
 cp dist/rgsp/boombrick build/rgsp/launch LICENSE NOTICE assets/fonts/OFL-*.txt "$APP/"
 cp dist/rgsp/lib/* "$APP/lib/"
-cp dist/rgsp/rgsp-sync dist/rgsp/rgsp-probe "$APP/bin/"
+cp dist/rgsp/rgsp-sync dist/rgsp/rgsp-probe dist/rgsp/rgsp-voice "$APP/bin/"
 cp build/rgsp/sdl2-h700.patch "$APP/lib/"
 cp build/rgsp/Boombrick.sh "build/rgsp/Boombrick Probe.sh" "$PORT/"
 scripts/licenses.sh dist/rgsp/boombrick > "$APP/THIRD-PARTY.txt"
-chmod +x "$APP/boombrick" "$APP/launch" "$APP/bin/rgsp-sync" "$APP/bin/rgsp-probe" "$PORT/Boombrick.sh" "$PORT/Boombrick Probe.sh"
+chmod +x "$APP/boombrick" "$APP/launch" "$APP/bin/rgsp-sync" "$APP/bin/rgsp-probe" "$APP/bin/rgsp-voice" "$PORT/Boombrick.sh" "$PORT/Boombrick Probe.sh"
 rm -f dist/Boombrick-RGSP.zip
 docker run --rm --user "$(id -u):$(id -g)" -v "$ROOT/dist:/d" -w /d/rgsp-port "$IMAGE" zip -9qr ../Boombrick-RGSP.zip Roms
 echo "dist/Boombrick-RGSP.zip"
