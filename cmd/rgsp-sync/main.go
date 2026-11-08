@@ -1,7 +1,7 @@
 // Command rgsp-sync copies a music library from a home server onto the
 // player's card, one way: the server is only ever read.
 //
-// On the server (for example in a container on Unraid, with the library
+// On the server (sanchez: for example in a container with the library
 // mounted read-only), list the library:
 //
 //	rgsp-sync manifest -root /music -out /meta/manifest.json -cache /meta/hashes.json

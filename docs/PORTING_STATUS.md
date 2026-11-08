@@ -1,6 +1,6 @@
 # RG SP music player — porting status
 
-Last updated 2026-11-07. Everything marked **verified** was run on the
+Last updated 2026-11-07 (second pass). Everything marked **verified** was run on the
 development PC (x86-64, Ubuntu 24.04). Nothing has run on an RG SP yet: the
 device hasn't arrived. **Mock** marks desktop stand-ins for hardware.
 
@@ -8,7 +8,7 @@ device hasn't arrived. **Mock** marks desktop stand-ins for hardware.
 
 | What | Where |
 |---|---|
-| This fork (Boombrick + EQ + offline build + sync) | this repository, branch `rgsp` |
+| This fork (Boombrick + EQ + offline build + RG SP build + sync) | this repository, branch `rgsp` |
 | Upstream Boombrick, untouched | branch `main` here (= `upstream/main`, 5915ca2, v0.5.1), and a separate clone in `../sp-firmwaremod-upstream/boombrick` |
 | plorpOS reference clone | `../sp-firmwaremod-upstream/plorpOS` (891ffe3) |
 | Desktop build headers, user-local (no sudo) | `../sp-firmwaremod-upstream/.devroot` (`scripts/devroot.sh` recreates it) |
@@ -143,87 +143,93 @@ binary builds; run `go test -bench . ./internal/peq` on the device.
 
 ## Phase 4 — running on the RG SP
 
+The plan is this Boombrick fork running on the RG SP; nothing else. BaseOS
+and plorpOS are only the base it runs on: BaseOS boots the device, plorpOS
+is the game launcher whose Ports shelf starts Boombrick, and two pieces of
+plorpOS's work are reused in the build (its SDL2 display patch and its
+record of the RG SP's buttons).
+
 ### What the device is (from sources, unverified on hardware)
 
-- The **RG SP** is its own model, distinct from the RG35XX SP and RG34XX SP:
-  Allwinner H700 (4× Cortex-A53, Mali-G31), **720×480** panel, Wi-Fi +
-  Bluetooth (BaseOS's H700 path loads `8821cs` and `rtk_hciattach`, i.e. a
-  Realtek RTL8821CS), about 1 GB RAM (not confirmed). Sources: BaseOS
-  `devices.json`; plorpOS `platform_h700.c` and `docs/install-h700.md`.
-- **Knulli does not list the RG SP** (it lists the RG35XX SP and RG34XX). Its
-  background music is EmulationStation's, not over games. ROCKNIX lists the
-  RG34XX SP and RG35XX SP, not the RG SP.
-- **BaseOS** (pvaibhav/BaseOS): a BusyBox userland on Anbernic's stock kernel,
-  glibc **2.35**; no menu of its own — it starts the frontend found on the
-  second card. **No aarch64 SDL2** (only stock armhf), **no KMSDRM** in the
-  stock kernel, **no ALSA dmix and no SysV IPC** to build one.
-- **plorpOS** (MIT) runs on BaseOS on the RG SP. It builds SDL 2.30.8 with a
-  Mali **fbdev** video driver and GLES2 renderer, dlopens ALSA, uses BlueZ +
-  **BlueALSA** for Bluetooth, and its music player **Muse** is a separate C
-  process (FFmpeg decode) driven over a line protocol. Because there's no
-  dmix, Muse and the emulator **take turns on the codec**: while music
-  plays during a game, the game is quieted. Output priority: USB DAC, wired,
-  Bluetooth, speaker.
+- The **RG SP** is its own model, not the RG35XX SP or RG34XX SP: Allwinner
+  H700 (4× Cortex-A53, Mali-G31), **720×480**, Wi-Fi and Bluetooth (BaseOS
+  loads `8821cs` and `rtk_hciattach`: a Realtek RTL8821CS), about 1 GB RAM
+  (not confirmed). Sources: BaseOS `devices.json`; plorpOS
+  `src/platform_h700.c`, `docs/install-h700.md`.
+- **Knulli** doesn't list the RG SP, so Boombrick's existing Knulli build
+  isn't a route; nor does ROCKNIX.
+- **BaseOS** (pvaibhav/BaseOS): BusyBox on Anbernic's stock kernel, glibc
+  **2.35**, **no aarch64 SDL2**, **no KMSDRM**, **no ALSA dmix** (and no SysV
+  IPC to build one), BlueZ + **BlueALSA**. It starts the frontend on the
+  second card: plorpOS.
+- **plorpOS** (MIT) on BaseOS: a Ports shelf for scripts in `Roms/Ports`,
+  run through its `pm-run.sh` (the card is `/mnt/SDCARD`); music in
+  `/mnt/SDCARD/Music`. With no dmix, plorpOS has its own player and its
+  emulators take turns on the sound card; a game is quieted while music
+  plays.
 
-### The two approaches compared
+### The build (done; not run on the device)
 
-| | A. Boombrick fork on BaseOS, launched from plorpOS | B. Extend plorpOS's Muse to look like Boombrick |
-|---|---|---|
-| Design fidelity | Boombrick's real UI (shown working at 720×480) | Re-drawn in plorpOS's C UI: approximate |
-| EQ | Done (Go), verified | Port `peq` to C (~250 lines) and its tests; presets are the same APO files |
-| Bluetooth | ALSA `default` + BlueALSA; upstream PR #5's thread fix carried over (it was for AirPods on bluealsa). Sink selection to write | Solved by plorpOS |
-| Music during games | Boombrick's background process exists, but must take part in plorpOS's codec hand-over with its emulator: plorpOS-internal, unknown effort | Solved by plorpOS (game quieted) |
-| Hardware code to write | A `baseos` platform profile: paths, volume (codec `lineout volume`), backlight, lid/suspend, battery, BT sink; bundle plorpOS's SDL2 | Little |
-| Lid, sleep, power | To write | Solved |
-| Language | Go (this codebase) | C |
+`make rgsp` (`build/rgsp/build.sh`) makes `dist/Boombrick-RGSP.zip`, to
+unzip at the root of plorpOS's card:
 
-### Recommendation
+```
+Roms/Ports/Boombrick.sh              listed on the Ports shelf
+Roms/Ports/boombrick/launch          sets BOOMBRICK_PLATFORM=rgsp, lib/ first
+Roms/Ports/boombrick/boombrick       aarch64, tags rgsp + offline defaults
+Roms/Ports/boombrick/lib/            SDL2 2.30.8 (Mali fbdev), libopus, libogg
+Roms/Ports/boombrick/bin/rgsp-sync   static
+Roms/Ports/boombrick/data, logs      made on first run
+```
 
-**A, with B's EQ as the safety net, decided by three early on-device
-tests.** A keeps the design you chose, and its hardware code is confined to
-one `internal/platform` profile plus bundled libraries; the EQ, offline
-build, sync and UI are done. B is cheaper in hardware terms but means
-rebuilding the UI in C.
+- **Toolchain:** `build/rgsp/Dockerfile`, plorpOS's recipe: Debian bullseye
+  cross-compiler pinned by digest, apt from a dated snapshot, plus arm64 ALSA,
+  Opus and Ogg headers. Go is the host's toolchain mounted read-only; Go
+  modules come from the host cache with the network off.
+- **SDL2:** `build/rgsp/sysroot.sh` builds 2.30.8 with plorpOS's
+  `sdl2-h700.patch` (Mali fbdev EGL driver, built-in gamepad as a joystick),
+  with plorpOS's options: GLES2, ALSA loaded at run time, no X11/Wayland/DRM.
+- **Checked:** the binary and every bundled library need glibc **2.29 at
+  most** (BaseOS: 2.35); everything they link resolves to glibc, the bundled
+  libraries, or BaseOS's own `libasound.so.2` (kept, so BlueALSA's plugin
+  works).
+- **Platform profile** `rgsp` (`internal/platform`): data and logs beside
+  the app, music in `/mnt/SDCARD/Music` (the same folder plorpOS's player
+  reads), Power left to the firmware, and the RG SP's joystick buttons as
+  plorpOS logged them on an RG SP (A, B, Y, X, L1, R1, Select, Start, Menu,
+  L2, R2 = b0…b10; D-pad hat 0). No self-updates.
+- **Background play:** Boombrick's background player starts in its own
+  session, so plorpOS ending the port's process group doesn't stop it.
 
-The deciding risk is music during games. Order of work once the RG SP
-arrives:
+### Open questions only the device can answer
 
-1. Install BaseOS + plorpOS as documented by plorpOS (no firmware of ours).
-   Confirm the panel size, RAM, glibc and which of `wpa_cli`/`iw`/`amixer`
-   exist.
-2. **Test 1 — display/input:** run the `rgsp` build against plorpOS's
-   SDL2 (fbdev/Mali) as a Port; check the controller mapping.
-3. **Test 2 — audio:** wired, speaker, then AirPods through BlueALSA, with
-   the EQ on; measure CPU with `perf` mode and `go test -bench`.
-4. **Test 3 — background with a game:** hand the music to the background
-   player and start a game from plorpOS. If Boombrick can't share the codec
-   with plorpOS's emulator without deep plorpOS changes, keep Boombrick for
-   listening and port the EQ into Muse (B) for in-game music, reading the
-   same preset files.
+1. **Does it start?** The Mali driver on fb0, the 720×480 layout, the
+   buttons. Does plorpOS take Menu for its own in-game menu while a port
+   runs? Boombrick's quick menu is on Menu.
+2. **Sound:** speaker and wired through ALSA `default`; Bluetooth through
+   BlueALSA (which device name, and when to switch). Upstream PR #5's
+   one-thread fix, carried in this fork, was made for AirPods on BlueALSA.
+3. **Music during games:** with no dmix only one program can hold the sound
+   card. Boombrick's background player holds it, so a game started from
+   plorpOS may find it busy. What plorpOS does then, and whether Boombrick
+   must hand the card over as plorpOS's own player does, is the main
+   unknown.
+4. Volume keys (plorpOS sets the codec's `lineout volume`), backlight and
+   lid sleep under a port, battery path, EQ CPU on the A53.
 
-### Toolchain and packaging (not yet built)
+## Desktop development
 
-- **Cross-compiler:** none installed here (no `aarch64-linux-gnu-gcc`).
-  Options: upstream's Docker image (glibc of TrimUI's SDK; a binary built
-  against an older glibc runs on 2.35 — to check with `objdump -T`), or
-  plorpOS's `mk/fetch-h700-sysroot.sh` sysroot (glibc 2.35, SDL 2.30.8
-  fbdev). The latter matches the target; **use it**.
-- **Libraries to bundle** in the app's `lib/`: SDL2 (plorpOS's build),
-  libopus, libogg; check that BaseOS has libasound and libsqlite3 or bundle
-  them. Keep every glibc symbol ≤ 2.35 (`objdump -T`).
-- **Graphics:** SDL's Mali fbdev driver, GLES2 renderer. The `rgsp` tag sets
-  720×480; untested on the real driver.
-- **Input:** SDL joystick/game controller. Boombrick already reads game
-  controllers (its Knulli mode); the RG SP's mapping is to write and check.
-- **Audio routing:** ALSA `default` (codec, no dmix) or the BlueALSA PCM for
-  Bluetooth, following plorpOS's priority. To write.
-- **Install format:** a folder under plorpOS's `Roms/Ports` with a launch
-  script, as Boombrick's Knulli build does (`build/knulli/`). Not flashed,
-  not partitioned: nothing here touches firmware. Unverified that plorpOS
-  starts native ports outside PortMaster.
+```
+. "$(scripts/devroot.sh)"        # SDL2/ALSA/Opus headers without sudo
+go build -trimpath -tags sqlite_omit_load_extension -o dist/desktop/boombrick ./cmd/boombrick
+BOOMBRICK_DATA=dist/desktop/data ./dist/desktop/boombrick -music /path/to/music
+```
 
-`rgsp-sync` is pure Go and builds as a **static** aarch64 binary
-(`CGO_ENABLED=0 GOARCH=arm64`), so it needs nothing from BaseOS.
+Add the `rgsp` tag for a 720×480 window. Keys: arrows = D-pad, K/J/I/U =
+A/B/X/Y, Q/E = L1/R1, 1/3 = L2/R2, Return = Start, Tab = Select, Escape =
+Menu. Test aids: `BOOMBRICK_CAPTURE=out.wav` (with `BOOMBRICK_NO_ALSA=1`,
+in place of the sound card), `BOOMBRICK_SCRIPT` (drive the app and save
+screenshots), `scripts/desktop-demo.sh` (the capture-and-verify demo).
 
 ## Phase 5 — synchronisation (done against temporary folders)
 
@@ -243,8 +249,9 @@ Compared:
   lists music, covers, lyrics and cue sheets with size, mtime and SHA-256
   (hashes cached by size+mtime, so reruns read only what changed). It
   refuses to write anything inside the library. Serve `/music` and the
-  manifest with any read-only HTTP server (e.g. an nginx container on
-  Unraid with the share mounted `:ro`).
+  manifest with any read-only HTTP server (e.g. a container on
+  sanchez with the library folder mounted `:ro`, as Navidrome
+  already mounts it).
 - **Player:** `rgsp-sync pull -from http://server:8080/ -to <card>/Music/Library -delete`
   downloads new/changed files into `.rgsp-sync/partial/`, resumes them after
   an interruption, verifies SHA-256, renames into place, writes its state
@@ -257,25 +264,25 @@ Compared:
 - Verified: unit tests (including the server tree byte-for-byte unchanged,
   resume from the exact byte offset, corrupt download discarded, user files
   untouched) and an end-to-end CLI run over HTTP on localhost with copies of
-  the synthetic library. **Never run against your Unraid library or an SD
-  card.**
+  the synthetic library. **Never run against the real library on sanchez or
+  an SD card.**
 - Not done: triggering `auto` when Wi-Fi comes up on the device, and a
   running Boombrick noticing a sync (it rescans the library at every start;
   `rgsp-sync` leaves a `.rgsp-sync/last-change` stamp for this).
 
 ## What remains unverified
 
-- Anything on RG SP hardware: display driver, input mapping, audio devices,
-  BlueALSA/AirPods, the codec hand-over with games, suspend/lid, battery
-  life, CPU load of the EQ on the A53.
+- Everything on RG SP hardware: the open questions above, Bluetooth and
+  AirPods, suspend, battery life, EQ CPU on the A53.
 - AirPods compatibility and battery performance: not claimed.
-- That the `rgsp` binary links against plorpOS's sysroot (not built).
 - The RG SP's exact RAM and radio chip.
 - The starter project's code (not found).
 
 ## Next concrete step
 
-Build the `rgsp` binary against plorpOS's H700 sysroot
-(`mk/fetch-h700-sysroot.sh`, glibc 2.35, SDL 2.30.8 fbdev) in Docker,
-check its glibc symbols with `objdump -T`, and package it as a plorpOS Port
-folder — so it's ready for Test 1 the day the RG SP arrives.
+When the RG SP arrives: install BaseOS and plorpOS as plorpOS documents,
+unzip `dist/Boombrick-RGSP.zip` onto plorpOS's card, start Boombrick from
+Ports, and work through the open questions in order, reading
+`Roms/Ports/boombrick/logs/`. Until then: run the sync server side on
+sanchez against a copy, and decide how the background player shares the
+sound card with plorpOS's games.
