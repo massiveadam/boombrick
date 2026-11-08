@@ -246,14 +246,28 @@ Roms/Ports/boombrick/data, logs      made on first run
 
 ### Cards and the library
 
-- **TF1, 32 GB:** BaseOS (it grows to fill the card; it needs little).
-- **TF2, 64 GB:** plorpOS, `Roms/Ports/boombrick`, games and the music.
-- The library on sanchez is **346 GB** (12,083 FLAC, 725 M4A, 399 MP3, 3
-  Opus; about 1,075 albums), measured read-only. It doesn't fit. Either sync
-  a selection (a beets query, or chosen albums), or keep a transcoded copy on
-  sanchez for the player: about 855 hours of music comes to roughly 49 GB as
-  Opus 128 kbps or 37 GB at 96 kbps. Over AirPods the Bluetooth link is AAC
-  at about 256 kbps anyway. Not built yet: your choice.
+- **TF1, 64 GB:** BaseOS (it grows to fill the card; it needs little).
+- **TF2, 256 GB:** plorpOS, `Roms/Ports/boombrick`, games and the music.
+- The library on sanchez is **346 GB** (12,083 FLAC, 725 M4A of which 135
+  ALAC and 10 E-AC-3, 399 MP3, 40 DSF, 20 WAV, 3 Opus; 1,071 album
+  folders), measured read-only. It doesn't fit as FLAC, so the player gets a
+  copy: `rgsp-sync transcode` encodes the lossless tracks (and E-AC-3, which
+  the player can't decode) as **Opus 256 kbps VBR**, and copies AAC, MP3,
+  Opus, cover files and lyrics as they are.
+  - Encoder: ffmpeg's libopus at 48 kHz through soxr. Not opusenc: it moves
+    ReplayGain into the Opus output gain and R128 tags, which Boombrick reads
+    as absolute gains on top of the header gain (a track came out 16 dB
+    quiet). ffmpeg keeps the REPLAYGAIN tags and an output gain of 0, so a
+    track levels as its FLAC does. Sample counts are exact (checked against
+    the FLAC, and in `ffmpeg_test.go`), so gapless holds.
+  - Embedded pictures are dropped (the folder's cover file is copied); the
+    2 albums without one get their first track's picture as `cover.jpg`.
+  - Measured on 8 albums: 253 kbit/s on average, about 165× real time with
+    6 jobs. Projected total about 97–100 GB.
+  - On sanchez: copy in `/srv/media/disk1/rgsp/opus256` (its state in
+    `.transcode-state.json` there), log in `/srv/media/disk1/rgsp/transcode.log`.
+    The library folder is only read. Run it again after adding music; it
+    redoes only what changed and removes what it made for tracks that are gone.
 
 ### Open questions only the device can answer
 
@@ -335,10 +349,13 @@ Compared:
 
 ## Next concrete step
 
-When the RG SP arrives: BaseOS on the 32 GB card (TF1), plorpOS on the 64 GB
+When the RG SP arrives: BaseOS on the 64 GB card (TF1), plorpOS on the 256 GB
 card (TF2) as plorpOS documents; unzip `dist/Boombrick-RGSP.zip` (and, if
 wanted, `dist/Tailscale-RGSP.zip`) onto TF2; run **Boombrick Probe** from
 Ports and read `Roms/Ports/boombrick/logs/probe.txt`; then start Boombrick
-and work through the open questions. Before then: decide between a
-selection and a transcoded copy of the library, and export the AirPods Pro 2
-filters from squiglink into the card's `Music/EQ` folder.
+and work through the open questions. First fill of the music: copy
+`/srv/media/disk1/rgsp/opus256` to the card's `Music/Library` with a card
+reader on sanchez (about 100 GB; far faster than Wi-Fi), after `rgsp-sync
+manifest` on it, then keep it in step over Wi-Fi with `rgsp-sync pull`.
+Before then: export the AirPods Pro 2 filters from squiglink into the card's
+`Music/EQ` folder.
