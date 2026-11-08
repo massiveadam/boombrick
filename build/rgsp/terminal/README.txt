@@ -11,7 +11,9 @@ quits. A USB or Bluetooth keyboard works too, if the device takes one.
 
 pocket: type `pocket` to open the coding agents' tmux session on your server
 over SSH (through Tailscale when its Port has it on). Set POCKET_SSH in
-config.sh first.
+config.sh first. The first run makes this device's key and prints it; add
+that line to ~/.ssh/authorized_keys on the server (`pocket key` shows it
+again). The SSH client is dropbear's dbclient, shipped in bin/.
 
 Unverified on the device: all of it. The program is TermSP built from source
 with the alternate screen switched on, the RG SP's buttons and these paths;

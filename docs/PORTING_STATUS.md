@@ -359,9 +359,13 @@ kernel are unknown).
   (A types, B backspace, Y keyboard, X moves it, L1 shift, R1 modifiers,
   Start Enter, Select Tab, Menu quits), and sets this Port's paths.
 - **`pocket`** opens the server's tmux session over SSH through `tailscale
-  nc` (userspace Tailscale routes nothing by itself). Whether BaseOS has an
-  SSH client (ssh or dropbear's dbclient) is unknown: `rgsp-probe` reports
-  it, with USB host mode and Bluetooth for a keyboard.
+  nc` (userspace Tailscale routes nothing by itself), with dropbear's
+  dbclient shipped in the Port (BaseOS may have no SSH client) and a key
+  made on first use (`pocket key` prints it for the server's
+  authorized_keys). Checked with a native build of the same dropbear and
+  the same script against a throwaway sshd: key login, the proxy hop, and
+  the tmux command arriving. The ARM build is linked to libc only and not
+  run. `rgsp-probe` reports USB host mode and Bluetooth for a keyboard.
 - **Dropped:** voice input. The RG SP lists no microphone; a push-to-talk
   prototype was built and then removed (in git history, commit ef3e3fa and
   after).

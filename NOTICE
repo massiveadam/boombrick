@@ -91,5 +91,6 @@ paths); terminal/LICENSES.txt holds each licence:
   libvterm 0.3.3               MIT                   in TermSP's tree
   SDL_fox 8eb043d              MIT                   https://github.com/palomena/SDL_fox
   FreeType 2.13.3              FTL                   https://freetype.org
+  Dropbear 2026.94 client      MIT-style             https://matt.ucc.asn.au/dropbear/ (dbclient, dropbearkey)
   Hack 3.003 fonts             MIT, Bitstream Vera   https://github.com/source-foundry/Hack
   Input mapping, after         MIT                   https://github.com/josegonzalez/minui-terminal-pak

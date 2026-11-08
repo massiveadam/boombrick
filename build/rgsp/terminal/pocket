@@ -1,27 +1,40 @@
 #!/bin/sh
-# Opens (or rejoins) the coding agents' tmux session on the server. Type
+# Opens (or rejoins) the coding agents' tmux session on the server: type
 # `pocket` in the terminal. Settings are in config.sh.
+#
+#   pocket            connect to POCKET_SSH
+#   pocket key        show this device's public key, to add to the server's
+#                     ~/.ssh/authorized_keys
+#
+# It uses the dbclient shipped here (dropbear), with a key made on first
+# use in home/.ssh, and goes through Tailscale when its Port has it on
+# (userspace Tailscale routes nothing by itself).
 DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$DIR/config.sh"
+export HOME="$DIR/home"
+KEY=$HOME/.ssh/id_dropbear
+mkdir -p "$HOME/.ssh"
+if [ ! -f "$KEY" ]; then
+	"$DIR/bin/dropbearkey" -t ed25519 -f "$KEY" > /dev/null 2>&1 || { echo "couldn't make a key" >&2; exit 1; }
+	echo "Made this device's SSH key. Add it to the server's ~/.ssh/authorized_keys:"
+	"$DIR/bin/dropbearkey" -y -f "$KEY" | grep '^ssh-'
+	echo
+	[ "$1" = key ] && exit 0
+fi
+if [ "$1" = key ]; then
+	"$DIR/bin/dropbearkey" -y -f "$KEY" | grep '^ssh-'
+	exit 0
+fi
+case "$POCKET_SSH" in "" | you@your-server)
+	echo "Set POCKET_SSH (user@server) in $DIR/config.sh first." >&2; exit 1 ;;
+esac
+hostport=${POCKET_SSH#*@} # host, or host/port
+host=${hostport%%/*}
+port=22
+case "$hostport" in */*) port=${hostport#*/} ;; esac
 TS="$(dirname "$DIR")/tailscale"
-target=${1:-$POCKET_SSH}
-proxy=
-# Tailscale in userspace mode routes nothing by itself: go through it.
 if [ -x "$TS/tailscale" ] && [ -S /tmp/rgsp-tailscale/tailscaled.sock ]; then
-	proxy="$TS/tailscale --socket=/tmp/rgsp-tailscale/tailscaled.sock nc %h %p"
+	exec "$DIR/bin/dbclient" -i "$KEY" -J "$TS/tailscale --socket=/tmp/rgsp-tailscale/tailscaled.sock nc $host $port" \
+		-t "$POCKET_SSH" "tmux new -As $POCKET_SESSION"
 fi
-if command -v ssh > /dev/null; then
-	if [ -n "$proxy" ]; then
-		exec ssh -o ProxyCommand="$proxy" -t "$target" "tmux new -As $POCKET_SESSION"
-	fi
-	exec ssh -t "$target" "tmux new -As $POCKET_SESSION"
-fi
-if command -v dbclient > /dev/null; then
-	host=${target#*@}
-	if [ -n "$proxy" ]; then
-		exec dbclient -J "$(echo "$proxy" | sed "s/%h/$host/; s/%p/22/")" -t "$target" "tmux new -As $POCKET_SESSION"
-	fi
-	exec dbclient -t "$target" "tmux new -As $POCKET_SESSION"
-fi
-echo "No SSH client here (ssh or dbclient). rgsp-probe's report says what the device has." >&2
-exit 1
+exec "$DIR/bin/dbclient" -i "$KEY" -t "$POCKET_SSH" "tmux new -As $POCKET_SESSION"

@@ -5,5 +5,6 @@ FONT_SIZE=18
 
 # `pocket` (type it in the terminal) opens this tmux session on the server
 # over SSH, through Tailscale when it's on. Coding agents run there.
+# user@host, or user@host/port for a port other than 22.
 POCKET_SSH=you@your-server
 POCKET_SESSION=pocket
