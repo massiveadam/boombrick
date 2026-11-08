@@ -201,21 +201,76 @@ Roms/Ports/boombrick/data, logs      made on first run
 - **Background play:** Boombrick's background player starts in its own
   session, so plorpOS ending the port's process group doesn't stop it.
 
+### Done before the device arrives (second round)
+
+- **Sound card shared with games** (`audio.Engine.SetIdleRelease`, on the
+  RG SP only): BaseOS has no dmix, so one program holds the codec at a
+  time. Boombrick lets go of it after half a second paused or stopped (the
+  sleep timer's fade included), as plorpOS's own player does, and waits up
+  to a second for a game to let go when it opens it. Engine tests: released
+  after the idle time, not during a short pause, released when the queue
+  ends, reopened on resume, off by default elsewhere.
+- **Output routing** (`internal/audio/route`, `platform.AudioState`), ported
+  from plorpOS's `audioout.c`: USB DAC, then wired, then Bluetooth, then
+  speaker. Bluetooth is the BlueALSA device plorpOS's `radio.sh` names in
+  `/tmp/tortos_btsink`; a DAC is any `USB-Audio` card in
+  `/proc/asound/cards`; wired is the PMIC's `spk_state`. When the headset or
+  DAC playing goes away, playback pauses instead of carrying on out of the
+  speaker; a better output that appears takes over. Unit tests for each.
+- **Volume keys, Power and the lid**: plorpOS's launcher keeps reading them
+  while a Port runs (its `plat_run` loop), so Boombrick leaves them to it.
+  **Backlight and battery**: the RG SP uses the same Allwinner `/dev/disp`
+  ioctl and `axp2202-battery` as the Brick, which Boombrick already drives.
+- **Four album columns** on the RG SP (190 px cards), three on the Brick as
+  before; checked in screenshots at 720×480 and 1024×768. Six upstream tests
+  that check the Brick's exact pixels or widths now run on the Brick build
+  only; none are lost there, and both builds pass all 58 packages.
+- **squiglink import**: its Export writes `<model> Filters.txt` in Equalizer
+  APO syntax (LSC/HSC shelves); its own LSQ/HSQ are accepted too, and the
+  preset is named after the model. squiglink's own `equalizer.js`, run in
+  Node, gives the same response as Boombrick's EQ to 5×10⁻⁷ dB, so AirPods
+  Pro 2 filters made on squiglink sound as it graphs them. (Use "Export",
+  not "Export Graphic EQ".)
+- **Device probe** (`cmd/rgsp-probe`, "Boombrick Probe" on the Ports shelf):
+  one run writes `boombrick/logs/probe.txt` with the screen, glibc, sound
+  cards, Bluetooth sink, input devices, battery, tools, TUN, storage and the
+  EQ's CPU cost on the A53.
+- **Tailscale** (optional `dist/Tailscale-RGSP.zip`): Tailscale 1.104.5's
+  static arm64 build, checked against its published SHA-256, toggled from
+  the Ports shelf. Userspace mode (no TUN or iptables needed), host name
+  `rgsp`, Tailscale SSH on, log uploads off, socket in `/tmp` (the FAT card
+  can't hold one). First login from `tailscale/authkey.txt`, deleted once
+  used. Away from home `rgsp-sync` reaches sanchez through its local proxy
+  (`ts.sh env`). Tested on sanchez with the x86 build, never logged in:
+  starts, sees it needs a login, says so, stops.
+
+### Cards and the library
+
+- **TF1, 32 GB:** BaseOS (it grows to fill the card; it needs little).
+- **TF2, 64 GB:** plorpOS, `Roms/Ports/boombrick`, games and the music.
+- The library on sanchez is **346 GB** (12,083 FLAC, 725 M4A, 399 MP3, 3
+  Opus; about 1,075 albums), measured read-only. It doesn't fit. Either sync
+  a selection (a beets query, or chosen albums), or keep a transcoded copy on
+  sanchez for the player: about 855 hours of music comes to roughly 49 GB as
+  Opus 128 kbps or 37 GB at 96 kbps. Over AirPods the Bluetooth link is AAC
+  at about 256 kbps anyway. Not built yet: your choice.
+
 ### Open questions only the device can answer
 
 1. **Does it start?** The Mali driver on fb0, the 720×480 layout, the
    buttons. Does plorpOS take Menu for its own in-game menu while a port
    runs? Boombrick's quick menu is on Menu.
-2. **Sound:** speaker and wired through ALSA `default`; Bluetooth through
-   BlueALSA (which device name, and when to switch). Upstream PR #5's
-   one-thread fix, carried in this fork, was made for AirPods on BlueALSA.
-3. **Music during games:** with no dmix only one program can hold the sound
-   card. Boombrick's background player holds it, so a game started from
-   plorpOS may find it busy. What plorpOS does then, and whether Boombrick
-   must hand the card over as plorpOS's own player does, is the main
-   unknown.
-4. Volume keys (plorpOS sets the codec's `lineout volume`), backlight and
-   lid sleep under a port, battery path, EQ CPU on the A53.
+2. **Sound:** speaker and wired through ALSA `default`; AirPods Pro 2 through
+   BlueALSA, with the EQ, and the pause when they go back in the case.
+3. **Music during games:** plorpOS quiets a game only for its own player
+   (`musec_playing()`), so a game started while Boombrick's background
+   player plays will find the codec held and run silent; paused, Boombrick
+   lets go within half a second. Whether plorpOS's emulator copes with a
+   held codec (silent, or refusing to start) is the main thing to check.
+   Making plorpOS quiet games for Boombrick would mean changing plorpOS,
+   which this fork doesn't.
+4. Battery life, suspend with the background player, the EQ's CPU on the
+   A53 (the probe measures it), Tailscale on BaseOS.
 
 ## Desktop development
 
@@ -280,9 +335,10 @@ Compared:
 
 ## Next concrete step
 
-When the RG SP arrives: install BaseOS and plorpOS as plorpOS documents,
-unzip `dist/Boombrick-RGSP.zip` onto plorpOS's card, start Boombrick from
-Ports, and work through the open questions in order, reading
-`Roms/Ports/boombrick/logs/`. Until then: run the sync server side on
-sanchez against a copy, and decide how the background player shares the
-sound card with plorpOS's games.
+When the RG SP arrives: BaseOS on the 32 GB card (TF1), plorpOS on the 64 GB
+card (TF2) as plorpOS documents; unzip `dist/Boombrick-RGSP.zip` (and, if
+wanted, `dist/Tailscale-RGSP.zip`) onto TF2; run **Boombrick Probe** from
+Ports and read `Roms/Ports/boombrick/logs/probe.txt`; then start Boombrick
+and work through the open questions. Before then: decide between a
+selection and a transcoded copy of the library, and export the AirPods Pro 2
+filters from squiglink into the card's `Music/EQ` folder.
