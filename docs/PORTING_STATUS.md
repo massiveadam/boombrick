@@ -264,9 +264,11 @@ Roms/Ports/boombrick/data, logs      made on first run
     2 albums without one get their first track's picture as `cover.jpg`.
   - Measured on 8 albums: 253 kbit/s on average, about 165× real time with
     6 jobs. Projected total about 97–100 GB.
-  - On sanchez: copy in `/srv/media/disk1/rgsp/opus256` (its state in
-    `.transcode-state.json` there), log in `/srv/media/disk1/rgsp/transcode.log`.
-    The library folder is only read. Run it again after adding music; it
+  - On sanchez: copy in `/srv/media/disk2/rgsp/opus256` (its state in
+    `.transcode-state.json` there), log in `/srv/media/disk2/rgsp/transcode.log`.
+    The library folder is only read. The copy is on the second disk (ext4,
+    USB 3): written to the library's own disk (exFAT on a USB 2 link, while
+    the media servers scanned it) it stalled everything else on that disk. Run it again after adding music; it
     redoes only what changed and removes what it made for tracks that are gone.
 
 ### Open questions only the device can answer
@@ -389,7 +391,7 @@ wanted, `dist/Tailscale-RGSP.zip`) onto TF2; run **Boombrick Probe** from
 Ports and read `Roms/Ports/boombrick/logs/probe.txt`; then start Boombrick
 and work through the open questions. First fill of the music, with the card in a reader on sanchez (about
 100 GB; far faster than Wi-Fi): `rgsp-sync manifest` on
-`/srv/media/disk1/rgsp/opus256`, then `rgsp-sync pull -from <that folder>
+`/srv/media/disk2/rgsp/opus256`, then `rgsp-sync pull -from <that folder>
 -manifest <the manifest> -to <card>/Music/Library`. Pull, not a plain copy:
 pull records what it synced on the card, so later pulls over Wi-Fi fetch
 only what changed (a plain copy would be fetched again in full).
