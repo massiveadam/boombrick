@@ -5,10 +5,11 @@ package alsa
 /*
 #cgo LDFLAGS: -lasound
 #include <alsa/asoundlib.h>
+#include <stdlib.h>
 
 // The device keeps 100 ms queued, enough to ride out scheduling hiccups.
-static int bb_open(snd_pcm_t **pcm, unsigned int rate) {
-	int err = snd_pcm_open(pcm, "default", SND_PCM_STREAM_PLAYBACK, 0);
+static int bb_open(snd_pcm_t **pcm, const char *name, unsigned int rate) {
+	int err = snd_pcm_open(pcm, name, SND_PCM_STREAM_PLAYBACK, 0);
 	if (err < 0) return err;
 	err = snd_pcm_set_params(*pcm, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 2, rate, 1, 100000);
 	if (err < 0) {
@@ -53,25 +54,46 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"syscall"
 	"unsafe"
 
 	"github.com/ujjwal313/boombrick/internal/audio"
 )
 
-// Device is the default playback device.
+// Device is a playback device: "default", or another ALSA name.
 type Device struct {
 	pcm  *C.snd_pcm_t
 	rate int
+	name string
 }
 
 var _ audio.Output = (*Device)(nil)
 
-// New returns a device that opens on first use.
-func New() *Device { return &Device{} }
+// New returns the default device, which opens on first use.
+func New() *Device { return &Device{name: "default"} }
 
-func alsaErr(op string, code C.int) error {
-	return fmt.Errorf("alsa %s: %s", op, C.GoString(C.snd_strerror(code)))
+// NewNamed returns the device ALSA knows as name, such as a BlueALSA PCM or
+// "plughw:CARD=KA13,DEV=0", which opens on first use.
+func NewNamed(name string) *Device { return &Device{name: name} }
+
+// Name is the ALSA name the device opens.
+func (d *Device) Name() string { return d.name }
+
+// Error is an ALSA failure; Busy reports whether another program holds the
+// device, as on a card without dmix while a game plays.
+type Error struct {
+	Op   string
+	Code int // negative errno, as ALSA returns
 }
+
+func (e *Error) Error() string {
+	return fmt.Sprintf("alsa %s: %s", e.Op, C.GoString(C.snd_strerror(C.int(e.Code))))
+}
+
+// Busy reports whether the device was held by someone else.
+func (e *Error) Busy() bool { return e.Code == -int(syscall.EBUSY) }
+
+func alsaErr(op string, code C.int) error { return &Error{Op: op, Code: int(code)} }
 
 // Open opens the device at rate. If it is already open at another rate, the
 // queued audio is played out first so the previous track isn't cut short.
@@ -84,7 +106,9 @@ func (d *Device) Open(rate int) error {
 		d.Close()
 	}
 	var pcm *C.snd_pcm_t
-	if err := C.bb_open(&pcm, C.uint(rate)); err < 0 {
+	name := C.CString(d.name)
+	defer C.free(unsafe.Pointer(name))
+	if err := C.bb_open(&pcm, name, C.uint(rate)); err < 0 {
 		return alsaErr("open", err)
 	}
 	d.pcm, d.rate = pcm, rate

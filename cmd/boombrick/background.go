@@ -34,6 +34,7 @@ func runBackground() error {
 	signal.Ignore(syscall.SIGHUP)
 	dir := programDir()
 	prof := platform.Detect(dir)
+	firmware = prof.Firmware
 	paths := prof.Paths
 	logPath := filepath.Join(paths.Logs, "Boombrick.txt")
 	logFile, err := logx.Open(logPath, 1<<20, 1)

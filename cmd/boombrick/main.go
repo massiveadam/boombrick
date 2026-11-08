@@ -84,6 +84,7 @@ func run(started time.Time) error {
 	// updates are staged in; on CrossMix and Knulli, Boombrick's data too.
 	dir := programDir()
 	prof := platform.Detect(dir)
+	firmware = prof.Firmware
 	paths := prof.Paths
 	for _, d := range []string{paths.Data, paths.Logs} {
 		if err := os.MkdirAll(d, 0o755); err != nil {

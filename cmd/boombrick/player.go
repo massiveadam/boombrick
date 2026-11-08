@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ujjwal313/boombrick/internal/audio"
 	"github.com/ujjwal313/boombrick/internal/audio/alsa"
 	"github.com/ujjwal313/boombrick/internal/audio/capture"
 	"github.com/ujjwal313/boombrick/internal/audio/decode"
+	"github.com/ujjwal313/boombrick/internal/audio/route"
 	"github.com/ujjwal313/boombrick/internal/library"
 	"github.com/ujjwal313/boombrick/internal/peq"
 	"github.com/ujjwal313/boombrick/internal/platform"
@@ -28,6 +30,12 @@ import (
 func newPlayer(db *sql.DB, prefs *settings.Settings, sp *spotify.Helper, online func() bool, log *slog.Logger,
 	notify func(player.Notice)) *player.Player {
 	p := player.New(output(log), decode.Open, log)
+	if firmware == platform.RGSP {
+		// The codec takes one program at a time: let a game have it once the
+		// music has been paused or stopped for half a second, as plorpOS's
+		// own player does.
+		p.SetIdleRelease(500 * time.Millisecond)
+	}
 	p.SetLevelling(prefs.Bool(settings.VolumeLevelling))
 	if sp == nil {
 		return p // the offline build: Spotify songs aren't played
@@ -58,12 +66,12 @@ func newPlayer(db *sql.DB, prefs *settings.Settings, sp *spotify.Helper, online 
 func output(log *slog.Logger) audio.Output {
 	path := os.Getenv("BOOMBRICK_CAPTURE")
 	if path == "" {
-		return alsa.New()
+		return deviceOutput(log)
 	}
 	if backgroundMode {
 		path = strings.TrimSuffix(path, ".wav") + ".background.wav" // not over the foreground's
 	}
-	var inner audio.Output = alsa.New()
+	var inner audio.Output = deviceOutput(log)
 	if os.Getenv("BOOMBRICK_NO_ALSA") == "1" {
 		inner = nil
 	}
@@ -79,6 +87,21 @@ func output(log *slog.Logger) audio.Output {
 
 // backgroundMode is set while the program is the background player.
 var backgroundMode bool
+
+// firmware is what the program runs under, set before the player is made.
+var firmware platform.Firmware
+
+// deviceOutput is the sound card: on the RG SP a router that picks the
+// speaker, a wired plug, a Bluetooth headset or a USB DAC as plorpOS does;
+// elsewhere ALSA's default device, which the firmware routes.
+func deviceOutput(log *slog.Logger) audio.Output {
+	if firmware != platform.RGSP {
+		return alsa.New()
+	}
+	return route.New(func() route.State { return platform.AudioState("/") },
+		func(name string) audio.Output { return alsa.NewNamed(name) },
+		func(msg string, args ...any) { log.Info(msg, args...) })
+}
 
 // captures are the recordings made, finished as the program ends.
 var captures []*capture.Output
