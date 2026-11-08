@@ -30,7 +30,7 @@ run() { # mode bypass
   BOOMBRICK_SCRIPT="3s R1 600ms Right Right A 800ms A 3s Start 1500ms shot:$R/shots/now-playing.png B Menu 700ms Down A 900ms shot:$R/shots/equalizer.png B 50s quit" \
     timeout 120 ./dist/desktop/boombrick > "$R/log.txt" 2>&1
 }
-run bypassed true & run eq false & wait
+run bypassed true & P1=$!; run eq false & P2=$!; wait $P1 $P2   # not Xvfb
 python3 scripts/eq-verify.py "$OUT/bypassed/capture.wav" "$OUT/eq/capture.wav" "presets/examples/Demo Smile.txt" --json "$OUT/verify.json" | tee "$OUT/verify.txt"
 for m in bypassed eq; do
   ffmpeg -loglevel error -y -i "$OUT/$m/capture.wav" -t 20 -c:a flac "$OUT/sweep-$m.flac"
