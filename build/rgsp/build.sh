@@ -36,6 +36,7 @@ docker run --rm --user "$(id -u):$(id -g)" \
 	-ldflags '-s -w -X github.com/ujjwal313/boombrick/internal/version.Version=$VERSION' \
 	-o dist/rgsp/boombrick ./cmd/boombrick
 CGO_ENABLED=0 /goroot/bin/go build -trimpath -ldflags '-s -w' -o dist/rgsp/rgsp-sync ./cmd/rgsp-sync
+CGO_ENABLED=0 /goroot/bin/go build -trimpath -ldflags '-s -w' -o dist/rgsp/rgsp-probe ./cmd/rgsp-probe
 # BaseOS is glibc 2.35: nothing may ask for newer.
 for f in dist/rgsp/boombrick \$(readlink -f /sysroot/usr/lib/libSDL2-2.0.so.0); do
 	if aarch64-linux-gnu-objdump -T \"\$f\" | grep -qE 'GLIBC_2\.(3[6-9]|[4-9][0-9])'; then
@@ -53,11 +54,24 @@ rm -rf dist/rgsp-port
 mkdir -p "$APP/bin" "$APP/lib"
 cp dist/rgsp/boombrick build/rgsp/launch LICENSE NOTICE assets/fonts/OFL-*.txt "$APP/"
 cp dist/rgsp/lib/* "$APP/lib/"
-cp dist/rgsp/rgsp-sync "$APP/bin/"
+cp dist/rgsp/rgsp-sync dist/rgsp/rgsp-probe "$APP/bin/"
 cp build/rgsp/sdl2-h700.patch "$APP/lib/"
-cp build/rgsp/Boombrick.sh "$PORT/"
+cp build/rgsp/Boombrick.sh "build/rgsp/Boombrick Probe.sh" "$PORT/"
 scripts/licenses.sh dist/rgsp/boombrick > "$APP/THIRD-PARTY.txt"
-chmod +x "$APP/boombrick" "$APP/launch" "$APP/bin/rgsp-sync" "$PORT/Boombrick.sh"
+chmod +x "$APP/boombrick" "$APP/launch" "$APP/bin/rgsp-sync" "$APP/bin/rgsp-probe" "$PORT/Boombrick.sh" "$PORT/Boombrick Probe.sh"
 rm -f dist/Boombrick-RGSP.zip
 docker run --rm --user "$(id -u):$(id -g)" -v "$ROOT/dist:/d" -w /d/rgsp-port "$IMAGE" zip -9qr ../Boombrick-RGSP.zip Roms
 echo "dist/Boombrick-RGSP.zip"
+
+# Tailscale, optional, in a zip of its own: Roms/Ports/Tailscale.sh and
+# Roms/Ports/tailscale/ (build/rgsp/tailscale/README.txt).
+TS=dist/rgsp-tailscale/Roms/Ports
+rm -rf dist/rgsp-tailscale
+mkdir -p "$TS/tailscale"
+TSBIN=$(build/rgsp/tailscale/fetch.sh arm64)
+cp "$TSBIN/tailscale" "$TSBIN/tailscaled" "$TSBIN/LICENSE" build/rgsp/tailscale/ts.sh build/rgsp/tailscale/README.txt "$TS/tailscale/"
+cp build/rgsp/tailscale/Tailscale.sh "$TS/"
+chmod +x "$TS/Tailscale.sh" "$TS/tailscale/ts.sh" "$TS/tailscale/tailscale" "$TS/tailscale/tailscaled"
+rm -f dist/Tailscale-RGSP.zip
+docker run --rm --user "$(id -u):$(id -g)" -v "$ROOT/dist:/d" -w /d/rgsp-tailscale "$IMAGE" zip -9qr ../Tailscale-RGSP.zip Roms
+echo "dist/Tailscale-RGSP.zip"
