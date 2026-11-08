@@ -70,6 +70,11 @@ type Record struct {
 	Action Action `json:"action"`
 	Codec  string `json:"codec,omitempty"`
 	Set    string `json:"settings,omitempty"`
+	// OutSize is the made file's size. Files aren't synced one by one (on
+	// a USB disk with exFAT that stalls everything else on it), so one cut
+	// short by a power loss shows as a size that doesn't match, and is made
+	// again.
+	OutSize int64 `json:"out_size,omitempty"`
 	// None marks a cover looked for and not found, so it isn't looked for
 	// again until the track changes.
 	None bool `json:"none,omitempty"`
@@ -173,6 +178,9 @@ func Run(ctx context.Context, o Options) (Result, error) {
 			it.None = true
 			st.Files[it.Out] = it.Record
 			return
+		}
+		if info, err := os.Stat(filepath.Join(o.Dst, filepath.FromSlash(out))); err == nil {
+			it.OutSize = info.Size()
 		}
 		st.Files[out] = it.Record
 		res.Made++
@@ -330,8 +338,8 @@ func makePlan(ctx context.Context, o Options, st stateFile) (Plan, error) {
 			p.Remove = append(p.Remove, out)
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(o.Dst, filepath.FromSlash(out))); err != nil && !r.None {
-			p.Remove = append(p.Remove, out) // made before, since lost: forget it, make it again
+		if info, err := os.Stat(filepath.Join(o.Dst, filepath.FromSlash(out))); !r.None && (err != nil || r.OutSize > 0 && info.Size() != r.OutSize) {
+			p.Remove = append(p.Remove, out) // made before, since lost or cut short: make it again
 			continue
 		}
 		delete(want, key)
@@ -404,9 +412,6 @@ func make1(ctx context.Context, o Options, it Item) (string, error) {
 		out += ext
 		it.Out += ext
 	}
-	if err := syncFile(tmp); err != nil {
-		return "", err
-	}
 	mt := time.Unix(0, it.MTime)
 	_ = os.Chtimes(tmp, mt, mt)
 	if err := os.Rename(tmp, out); err != nil {
@@ -430,18 +435,6 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return out.Close()
-}
-
-func syncFile(p string) error {
-	f, err := os.OpenFile(p, os.O_RDWR, 0)
-	if err != nil {
-		return err
-	}
-	err = f.Sync()
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	return err
 }
 
 func relSlash(root, p string) string {

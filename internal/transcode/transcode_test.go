@@ -289,3 +289,24 @@ func TestCaseCollisionSkipped(t *testing.T) {
 		t.Fatalf("make %v skip %v", res.Make, res.Skip)
 	}
 }
+
+// A file cut short after it was made (a power cut before the disk had it)
+// is made again.
+func TestShortFileRemade(t *testing.T) {
+	src := library(t)
+	dst := t.TempDir()
+	if _, err := Run(context.Background(), Options{Src: src, Dst: dst, Encoder: &fake{}}); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dst, "A/One/01 Song.opus"), nil, 0o644)
+	enc := &fake{}
+	if _, err := Run(context.Background(), Options{Src: src, Dst: dst, Encoder: enc}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(enc.encoded, ",") != "01 Song.flac" {
+		t.Fatalf("encoded %v", enc.encoded)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dst, "A/One/01 Song.opus")); string(b) != "opus:flac one" {
+		t.Fatalf("%q", b)
+	}
+}
