@@ -345,8 +345,20 @@ func cyberdeck(w io.Writer, p func(string) string) {
 		p("lib/modules/*/kernel/net/bluetooth/hidp/hidp.ko*"), p("lib/modules/*/kernel/drivers/input/misc/uinput.ko*"))), " ")))
 	for _, kv := range kernelConfig(p("proc/config.gz"), "CONFIG_SND_USB_AUDIO", "CONFIG_USB_HID", "CONFIG_BT_HIDP",
 		"CONFIG_INPUT_UINPUT", "CONFIG_UHID", "CONFIG_USB_MUSB_HDRC", "CONFIG_USB_OTG", "CONFIG_USER_NS",
-		"CONFIG_SECURITY_LANDLOCK", "CONFIG_SECCOMP_FILTER", "CONFIG_SWAP", "CONFIG_ZRAM") {
+		"CONFIG_SECURITY_LANDLOCK", "CONFIG_SECCOMP_FILTER", "CONFIG_SWAP", "CONFIG_ZRAM",
+		"CONFIG_BT", "CONFIG_BT_RFCOMM", "CONFIG_BT_HCIUART") {
 		line(w, kv[0], kv[1])
+	}
+	if p("") == "/" {
+		for _, c := range globs("/proc/asound/card[0-9]*") {
+			n := strings.TrimPrefix(filepath.Base(c), "card")
+			names, err := captureControls(n)
+			v := orNone(strings.Join(names, ", "))
+			if err != nil {
+				v = "unknown (" + err.Error() + ")"
+			}
+			line(w, "capture controls card "+n, v)
+		}
 	}
 	for _, t := range []string{"arecord", "tmux", "mosh", "bash", "python3", "git", "sox", "ffmpeg", "node"} {
 		line(w, t, which(t))
@@ -415,4 +427,27 @@ func kernelConfig(path string, names ...string) [][2]string {
 		out = append(out, [2]string{n, v})
 	}
 	return out
+}
+
+// captureControls names a card's mixer controls that capture (from amixer,
+// which only reads them), the sign of a microphone or line input.
+func captureControls(card string) ([]string, error) {
+	out, err := exec.Command("amixer", "-c", card, "scontents").Output()
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	name := ""
+	for _, l := range strings.Split(string(out), "\n") {
+		if n, ok := strings.CutPrefix(l, "Simple mixer control '"); ok {
+			name, _, _ = strings.Cut(n, "'")
+			continue
+		}
+		if c, ok := strings.CutPrefix(strings.TrimSpace(l), "Capabilities:"); ok && name != "" &&
+			(strings.Contains(c, "cvolume") || strings.Contains(c, "cswitch")) {
+			names = append(names, name)
+			name = ""
+		}
+	}
+	return names, nil
 }
