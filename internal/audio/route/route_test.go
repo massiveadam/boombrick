@@ -145,3 +145,26 @@ func TestWaitsForBusyCodec(t *testing.T) {
 		t.Fatalf("waited %v", waited)
 	}
 }
+
+// The engine opens before every write (Engine.write). A repeated Open keeps
+// the sink playing, so Write still sees the headset go and pauses.
+func TestEngineCallPatternStillPausesOnLoss(t *testing.T) {
+	g := newRig(State{Bluetooth: "bt"})
+	step := func() error {
+		if err := g.r.Open(48000); err != nil {
+			return err
+		}
+		return g.r.Write(make([]int16, 4))
+	}
+	if err := step(); err != nil {
+		t.Fatal(err)
+	}
+	g.set(State{})
+	g.tick()
+	if err := step(); !errors.Is(err, ErrSinkLost) {
+		t.Fatalf("after the headset went: %v, sink %+v", err, g.r.Sink())
+	}
+	if g.devs["default"] != nil {
+		t.Fatal("carried on out of the speaker")
+	}
+}

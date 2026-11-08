@@ -101,8 +101,9 @@ type Engine struct {
 	// idle is how long the output stays open with nothing playing before it
 	// is closed for someone else to use; 0 keeps it open. played counts the
 	// chunks written, so a timer can tell that nothing has played since.
-	idle   time.Duration
-	played uint64
+	idle      time.Duration
+	played    uint64
+	idleArmed bool // a release is scheduled for this stretch without playing
 
 	// Ends wait in a FIFO for a notifier goroutine, so onEnd sees them in the
 	// order they happened and the loop never blocks on it.
@@ -413,7 +414,8 @@ func (e *Engine) loop() {
 			}
 			continue
 		case e.cur == nil || e.paused:
-			if !e.quiet && e.idle > 0 {
+			if e.idle > 0 && !e.idleArmed {
+				e.idleArmed = true
 				e.releaseWhenIdle(e.idle, e.played)
 			}
 			if e.paused && !e.quiet {
@@ -453,6 +455,7 @@ func (e *Engine) loop() {
 		frame, fo, fe, proc := e.st.Frame, e.fadeOut, e.fadeEnd, e.proc
 		e.replay, e.back, e.quiet = 0, 0, false
 		e.played++
+		e.idleArmed = false
 		e.mu.Unlock()
 
 		if replay > 0 {

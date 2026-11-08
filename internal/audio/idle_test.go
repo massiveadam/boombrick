@@ -78,3 +78,15 @@ func TestNoIdleReleaseByDefault(t *testing.T) {
 		t.Fatal("released without being asked to")
 	}
 }
+
+// Stop lets go of the output too.
+func TestIdleReleaseAfterStop(t *testing.T) {
+	out := &sink{}
+	e := NewEngine(out, nil)
+	defer e.Close()
+	e.SetIdleRelease(30 * time.Millisecond)
+	e.Play(&ramp{rate: 48000, n: 48000 * 60})
+	waitFor(t, "playing", func() bool { return out.written() > 4800 })
+	e.Stop()
+	waitFor(t, "release", out.isClosed)
+}

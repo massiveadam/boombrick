@@ -132,11 +132,26 @@ func isBusy(err error) bool {
 }
 
 // Open opens the sink State names now at rate, waiting for it while another
-// program holds it.
+// program holds it. The engine opens before every write: while a sink is
+// open, Open keeps it, and only Write's check moves to another or finds it
+// gone.
 func (r *Router) Open(rate int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.cur != nil && rate == r.rate {
+		return r.retry(rate) // reopens it only if it closed itself
+	}
 	return r.openLocked(Resolve(r.state()), rate)
+}
+
+// retry opens cur at rate, waiting while another program holds it.
+func (r *Router) retry(rate int) error {
+	err := r.cur.Open(rate)
+	for waited := time.Duration(0); err != nil && isBusy(err) && waited < r.BusyWait; waited += r.RetryEvery {
+		r.sleep(r.RetryEvery)
+		err = r.cur.Open(rate)
+	}
+	return err
 }
 
 func (r *Router) openLocked(s Sink, rate int) error {
@@ -149,12 +164,7 @@ func (r *Router) openLocked(s Sink, rate int) error {
 		r.log("output", "to", s.Kind.String(), "device", s.Name)
 	}
 	r.sink, r.rate, r.checked = s, rate, r.now()
-	err := r.cur.Open(rate)
-	for waited := time.Duration(0); err != nil && isBusy(err) && waited < r.BusyWait; waited += r.RetryEvery {
-		r.sleep(r.RetryEvery)
-		err = r.cur.Open(rate)
-	}
-	return err
+	return r.retry(rate)
 }
 
 // Write plays buf. Every CheckEvery it looks at State: a better sink takes
