@@ -108,9 +108,17 @@ func (t Tmux) bin() string {
 	return t.Bin
 }
 
-// Type sends text literally (-l), so nothing in it is read as a key name.
+// Type pastes text into the pane: through a tmux buffer, as a bracketed
+// paste when the program there asks for one (Claude Code and Codex do), so
+// a leading "/" or "!" is text, not a command or a mode switch, and no
+// character is read as a key. Clean has already taken out control characters.
 func (t Tmux) Type(text string) error {
-	out, err := exec.Command(t.bin(), "send-keys", "-t", t.Target, "-l", "--", text).CombinedOutput()
+	load := exec.Command(t.bin(), "load-buffer", "-b", "rgsp-voice", "-")
+	load.Stdin = strings.NewReader(text)
+	if out, err := load.CombinedOutput(); err != nil {
+		return fmt.Errorf("voice: tmux: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	out, err := exec.Command(t.bin(), "paste-buffer", "-p", "-r", "-d", "-b", "rgsp-voice", "-t", t.Target).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("voice: tmux: %v: %s", err, strings.TrimSpace(string(out)))
 	}

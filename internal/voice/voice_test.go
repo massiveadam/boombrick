@@ -192,6 +192,31 @@ func TestTmux(t *testing.T) {
 	}
 }
 
+// TestTmuxBracketedPaste: a program that asks for bracketed paste, as agent
+// TUIs do, gets the text between the paste markers, not as keystrokes.
+func TestTmuxBracketedPaste(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("no tmux")
+	}
+	sock := t.TempDir() + "/tmux.sock"
+	tmux := func(a ...string) string {
+		out, _ := exec.Command("tmux", append([]string{"-S", sock}, a...)...).CombinedOutput()
+		return string(out)
+	}
+	tmux("new-session", "-d", "-s", "t", "-x", "120", "-y", "10", `printf '\033[?2004h'; exec cat -v`)
+	defer tmux("kill-server")
+	time.Sleep(300 * time.Millisecond)
+	ty := Tmux{Target: "t", Bin: writeWrapper(t, sock)}
+	if err := ty.Type("/help me"); err != nil {
+		t.Fatal(err)
+	}
+	ty.Key("Enter")
+	time.Sleep(300 * time.Millisecond)
+	if pane := tmux("capture-pane", "-p", "-t", "t"); !strings.Contains(pane, "^[[200~/help me^[[201~") {
+		t.Fatalf("pane: %q", pane)
+	}
+}
+
 // writeWrapper is a tmux that talks to the test's own server.
 func writeWrapper(t *testing.T, sock string) string {
 	p := t.TempDir() + "/tmux"
