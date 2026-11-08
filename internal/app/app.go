@@ -346,7 +346,7 @@ func New(opts Options) (*App, error) {
 		window:     win,
 		renderer:   r,
 		ui:         u,
-		mapper:     input.Mapper{Labelled: opts.Pads.Labelled},
+		mapper:     input.Mapper{Labelled: opts.Pads.Labelled, Buttons: opts.Pads.Joystick.Buttons()},
 		pads:       pads,
 		repeat:     input.NewRepeater(),
 		home:       home.New(nil),

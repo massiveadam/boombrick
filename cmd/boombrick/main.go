@@ -435,7 +435,7 @@ func run(started time.Time) error {
 		Pads:          prof.Pads(),
 		Fonts:         fontStore,
 		Version:       version.Version,
-		Device:        "TrimUI Brick",
+		Device:        prof.Device(),
 		Updater:       updater,
 		Perf:          rec,
 		Notices:       notices,
