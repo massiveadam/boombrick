@@ -115,3 +115,10 @@ knulli: device dist/qjs/qjs-linux-aarch64
 	rm -f dist/Boombrick-Knulli.zip
 	cd dist/knulli && zip -9qr ../Boombrick-Knulli.zip roms
 	@echo "dist/Boombrick-Knulli.zip"
+
+# Boombrick-RGSP.zip unzips at the root of plorpOS's card on an Anbernic RG SP
+# (BaseOS). Ports lists Boombrick.sh, which starts the app in the boombrick
+# folder beside it. See build/rgsp/build.sh.
+.PHONY: rgsp
+rgsp:
+	build/rgsp/build.sh $(VERSION)
