@@ -78,3 +78,7 @@ build also uses, from plorpOS (https://github.com/thwonp/plorpOS):
   RG SP button numbering       MIT                   plorpOS src/platform_h700.c
   Toolchain recipe             MIT                   plorpOS mk/toolchain.Dockerfile
   libopus, libogg              BSD-3-Clause          Debian bullseye arm64, shipped in lib/
+
+Tailscale-RGSP.zip, optional, holds Tailscale's own static build:
+
+  Tailscale 1.104.5            BSD-3-Clause          https://tailscale.com (tailscale/LICENSE)
