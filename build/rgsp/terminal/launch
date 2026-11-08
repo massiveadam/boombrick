@@ -1,6 +1,6 @@
 #!/bin/sh
-# Starts the terminal (TermSP) on the RG SP from plorpOS's Ports shelf, with
-# push-to-talk beside it when config.sh sets it up. Menu quits.
+# Starts the terminal (TermSP) on the RG SP from plorpOS's Ports shelf.
+# Menu quits.
 PAK_DIR="$(cd "$(dirname "$0")" && pwd)"
 PORTS="$(dirname "$PAK_DIR")"
 cd "$PAK_DIR" || exit 1
@@ -17,16 +17,7 @@ if [ -f "$PORTS/tailscale/ts.sh" ] && sh "$PORTS/tailscale/ts.sh" status 2>/dev/
 	eval "$(sh "$PORTS/tailscale/ts.sh" env)"
 fi
 
-ptt=
-if [ -n "$VOICE_SERVER" ] && [ -f "$PAK_DIR/voice-token.txt" ] && command -v rgsp-voice > /dev/null; then
-	rgsp-voice ptt -server "$VOICE_SERVER" -token-file "$PAK_DIR/voice-token.txt" \
-		-input "$VOICE_INPUT" -talk "$VOICE_TALK" -enter "$VOICE_ENTER" -clear "$VOICE_CLEAR" \
-		-device "$VOICE_MIC" > logs/voice.txt 2>&1 &
-	ptt=$!
-fi
-
 shell=/bin/sh
 for s in /usr/bin/bash /bin/bash; do [ -x "$s" ] && shell=$s && break; done
 SHELL=$shell ./termsp -k -s "$FONT_SIZE" -f fonts/Hack-Regular.ttf -b fonts/Hack-Bold.ttf > logs/termsp.txt 2>&1
-[ -n "$ptt" ] && kill "$ptt" 2>/dev/null
 exit 0

@@ -1,5 +1,5 @@
 diff --git a/src/EVENTS.c b/src/EVENTS.c
-index 3625ecc..dc768ac 100755
+index 3625ecc..5f1d09b 100755
 --- a/src/EVENTS.c
 +++ b/src/EVENTS.c
 @@ -171,41 +171,38 @@ static void handleKeyboard(SDL_Event *event) {
@@ -8,7 +8,7 @@ index 3625ecc..dc768ac 100755
  int handleJoyButtons(SDL_Event *ev) {
 +    /* The RG SP's built-in pad, as plorpOS's SDL reports it: b0 A, b1 B,
 +     * b2 Y, b3 X, b4 L1, b5 R1, b6 Select, b7 Start, b8 Menu, b9 L2, b10 R2.
-+     * L2 and R2 are left alone: push-to-talk (rgsp-voice) reads them. */
++     * L2 and R2 do nothing. */
      switch (ev->type) {
          case SDL_JOYBUTTONDOWN:
              switch (ev->jbutton.button) {
@@ -59,10 +59,10 @@ index 3625ecc..dc768ac 100755
              break;
  
 diff --git a/src/KEYB.c b/src/KEYB.c
-index 9e760e0..e6c8b24 100755
+index 9e760e0..e7adc04 100755
 --- a/src/KEYB.c
 +++ b/src/KEYB.c
-@@ -27,12 +27,12 @@ char *help =
+@@ -27,12 +27,10 @@ char *help =
      "  B:          backspace\n"
      "  L1:         shift\n"
      "  R1:         toggle key (for shift/ctrl...)\n"
@@ -74,8 +74,6 @@ index 9e760e0..e6c8b24 100755
      "  SELECT:     tab\n"
 -    "  L2:         left\n"
 -    "  R2:         right\n"
-+    "  R2 (held):  talk (rgsp-voice)\n"
-+    "  L2:         send what was said\n"
      "  MENU:       quit\n\n"
      "Cheatcheet (tutorial at www.shellscript.sh):\n"
      "  TAB key         complete path\n"

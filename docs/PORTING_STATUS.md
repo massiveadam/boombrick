@@ -339,7 +339,7 @@ Compared:
   running Boombrick noticing a sync (it rescans the library at every start;
   `rgsp-sync` leaves a `.rgsp-sync/last-change` stamp for this).
 
-## Phase 6 — terminal and voice (server side done; device side unverified)
+## Phase 6 — terminal (built; not run on the device)
 
 The handheld as a pocket terminal for coding agents that run on the home
 server. Running them on the handheld is ruled out for Claude Code (its docs
@@ -347,36 +347,9 @@ ask for 4 GB of RAM; the RG SP has 1 GB) and only an experiment for Codex
 (an aarch64 musl build exists; memory use and its sandbox on the vendor
 kernel are unknown).
 
-```
-RG SP: terminal Port ──ssh over Tailscale──▶ server: tmux "pocket" ─ claude / codex
-       rgsp-voice ptt ──WAV over Tailscale──▶ server: rgsp-voice serve ─▶ speaches (faster-whisper)
-                                                         └─ tmux send-keys -l (typed, not entered)
-```
-
-- **`rgsp-voice serve`** (server): takes a WAV clip, transcribes it through
-  any OpenAI-compatible endpoint, types the text into a tmux pane. Newlines
-  and control characters are removed and nothing is entered: Enter is a
-  separate request, after reading. Only named keys (enter, clear, escape,
-  backspace, arrows, tab) can be sent. Needs a token of 16+ characters and
-  refuses to listen on every interface.
-- **`rgsp-voice ptt`** (device): hold a button to record (arecord, 16 kHz
-  mono), let go to send; other buttons send Enter or clear the line. Reads
-  the buttons from evdev without grabbing them. `rgsp-voice keys` prints
-  button codes. Built static into the RG SP package.
-- **Verified on sanchez:** speaches (CPU image, faster-whisper `small.en`)
-  on loopback; a synthesized 4.5 s prompt came back word for word in
-  3.6–5.4 s with six cores busy elsewhere, and appeared in tmux unentered
-  until Enter. Unit tests cover the cleaning, the key list, the token, WAV
-  checks and the button logic; a test types into a real tmux.
-- **Unverified (needs the device):** a microphone. None is listed for the
-  RG SP; options are a USB-C mic if the port does host mode, or a Bluetooth
-  headset's mic through BlueALSA's HFP (8–16 kHz, incomplete support).
-  `rgsp-probe` now reports capture devices, USB host or gadget mode,
-  Bluetooth adapters, uinput, user namespaces, memory and the kernel options
-  these need.
-- **Terminal Port (built, not run on the device):** `build/rgsp/terminal/build.sh`
-  makes `dist/Terminal-RGSP.zip`: TermSP (the terminal Terminal.pak wraps
-  for NextUI, which lists the RG SP) built from source for plorpOS, with
+- **Terminal Port:** `build/rgsp/terminal/build.sh` makes
+  `dist/Terminal-RGSP.zip`: TermSP (the terminal Terminal.pak wraps for
+  NextUI, which lists the RG SP) built from source for plorpOS, with
   libvterm, SDL_fox (no fontconfig: BaseOS lacks it) and a bare FreeType
   compiled in; it needs only SDL2 (shipped), libutil and libc, nothing past
   glibc 2.35. `termsp-rgsp.patch` switches on libvterm's alternate screen
@@ -384,18 +357,17 @@ RG SP: terminal Port ──ssh over Tailscale──▶ server: tmux "pocket" ─
   test against the same libvterm shows the shell's screen restored after a
   full-screen program with it, and not without), maps the RG SP's buttons
   (A types, B backspace, Y keyboard, X moves it, L1 shift, R1 modifiers,
-  Start Enter, Select Tab, Menu quits; L2 and R2 left for push-to-talk), and
-  sets this Port's paths. `pocket` opens the server's tmux session over SSH
-  through `tailscale nc` (userspace Tailscale routes nothing by itself);
-  launch starts `rgsp-voice ptt` beside the terminal when `config.sh` sets it
-  up. Whether BaseOS has an SSH client (ssh or dropbear's dbclient) is
-  unknown: the probe reports it.
-- **Not done:** running `rgsp-voice serve` as a service (it's one command;
-  it waits for a mic to exist). Reviewed by Codex, which suggested bracketed
-  paste (done), routing through Tailscale's proxy (done), and t3code-threads
-  (a CLI for T3 Code threads over its WebSocket API) as a later, structured
-  alternative to typing into a TUI; it imports T3's internal contracts, so
-  it may break with T3 updates.
+  Start Enter, Select Tab, Menu quits), and sets this Port's paths.
+- **`pocket`** opens the server's tmux session over SSH through `tailscale
+  nc` (userspace Tailscale routes nothing by itself). Whether BaseOS has an
+  SSH client (ssh or dropbear's dbclient) is unknown: `rgsp-probe` reports
+  it, with USB host mode and Bluetooth for a keyboard.
+- **Dropped:** voice input. The RG SP lists no microphone; a push-to-talk
+  prototype was built and then removed (in git history, commit ef3e3fa and
+  after).
+- **Later, maybe:** t3code-threads (a CLI for T3 Code threads over its
+  WebSocket API) as a structured alternative to typing into a TUI; it
+  imports T3's internal contracts, so it may break with T3 updates.
 
 ## What remains unverified
 
