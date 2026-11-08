@@ -8,6 +8,12 @@
 //
 // and serve /music and /meta/manifest.json with any read-only HTTP server.
 //
+// For a card too small for the library, keep a copy for the player instead
+// (lossless tracks as Opus, the rest as they are; the library is only read)
+// and list and serve that:
+//
+//	rgsp-sync transcode -from /music -to /srv/rgsp/opus256 [-bitrate 256] [-dry-run]
+//
 // On the player:
 //
 //	rgsp-sync pull -from http://server:8080/ -to /mnt/SDCARD/Music/Library [-delete] [-dry-run]
@@ -28,11 +34,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/ujjwal313/boombrick/internal/musicsync"
+	"github.com/ujjwal313/boombrick/internal/transcode"
 )
 
 func main() {
@@ -47,6 +55,8 @@ func main() {
 		err = pull(os.Args[2:], false)
 	case "auto":
 		err = pull(os.Args[2:], true)
+	case "transcode":
+		err = transcodeCmd(os.Args[2:])
 	default:
 		usage()
 	}
@@ -57,7 +67,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: rgsp-sync manifest|pull|auto [flags]  (-h for each)")
+	fmt.Fprintln(os.Stderr, "usage: rgsp-sync manifest|transcode|pull|auto [flags]  (-h for each)")
 	os.Exit(2)
 }
 
@@ -176,4 +186,46 @@ func within(root, p string) bool {
 	q, _ := filepath.Abs(p)
 	rel, err := filepath.Rel(r, q)
 	return err == nil && !strings.HasPrefix(rel, "..")
+}
+
+func transcodeCmd(args []string) error {
+	fs := flag.NewFlagSet("transcode", flag.ExitOnError)
+	from := fs.String("from", "", "the library, which is only read")
+	to := fs.String("to", "", "the copy for the player; must not overlap the library")
+	state := fs.String("state", "", "the state file, outside the library; default <to>/.transcode-state.json")
+	bitrate := fs.Int("bitrate", 256, "Opus bitrate, kbit/s")
+	jobs := fs.Int("jobs", max(runtime.NumCPU()-2, 1), "encodes at once")
+	dry := fs.Bool("dry-run", false, "show what would happen, change nothing")
+	ffmpeg := fs.String("ffmpeg", "", "ffmpeg to use (default: on PATH)")
+	ffprobe := fs.String("ffprobe", "", "ffprobe to use (default: on PATH)")
+	fs.Parse(args)
+	if *from == "" || *to == "" {
+		return errors.New("-from and -to are needed")
+	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	start := time.Now()
+	res, err := transcode.Run(ctx, transcode.Options{
+		Src: *from, Dst: *to, State: *state, Jobs: *jobs, DryRun: *dry, Log: log,
+		Encoder: transcode.FFmpeg{FFmpeg: *ffmpeg, FFprobe: *ffprobe, Bitrate: *bitrate},
+	})
+	n := map[transcode.Action]int{}
+	for _, it := range res.Make {
+		n[it.Action]++
+	}
+	verb := "made"
+	if *dry {
+		verb = "would make"
+	}
+	fmt.Printf("%s %d (encode %d, copy %d, cover %d), remove %d, %d up to date, %d skipped; made %d, removed %d, failed %d, in %v\n",
+		verb, len(res.Make), n[transcode.Encode], n[transcode.Copy], n[transcode.Cover], len(res.Remove), res.Kept, len(res.Skip),
+		res.Made, res.Removed, len(res.Failed), time.Since(start).Round(time.Second))
+	for _, s := range res.Skip {
+		fmt.Println("  skipped", s)
+	}
+	for p, e := range res.Failed {
+		fmt.Println("  failed ", p, e)
+	}
+	return err
 }
