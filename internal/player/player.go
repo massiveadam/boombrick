@@ -1026,3 +1026,7 @@ func (p *Player) cueLocked() {
 // SetProcessor puts proc, an equaliser, in the output path of everything the
 // player plays; nil takes it out. See audio.Engine.SetProcessor.
 func (p *Player) SetProcessor(proc audio.Processor) { p.engine.SetProcessor(proc) }
+
+// SetIdleRelease closes the output once playback has been paused or stopped
+// for d; see audio.Engine.SetIdleRelease.
+func (p *Player) SetIdleRelease(d time.Duration) { p.engine.SetIdleRelease(d) }

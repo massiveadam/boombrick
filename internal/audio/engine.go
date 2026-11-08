@@ -98,6 +98,11 @@ type Engine struct {
 	closed   bool
 	st       Status
 	proc     Processor // nil: none
+	// idle is how long the output stays open with nothing playing before it
+	// is closed for someone else to use; 0 keeps it open. played counts the
+	// chunks written, so a timer can tell that nothing has played since.
+	idle   time.Duration
+	played uint64
 
 	// Ends wait in a FIFO for a notifier goroutine, so onEnd sees them in the
 	// order they happened and the loop never blocks on it.
@@ -233,6 +238,12 @@ func (e *Engine) Queue(src Source) {
 
 // Stop stops playback.
 func (e *Engine) Stop() { e.Play(nil) }
+
+// SetIdleRelease closes the output once playback has been paused or stopped
+// for d, so that another program can open a device that takes one at a time,
+// as the RG SP's codec does: BaseOS has no dmix, and a game needs it. The
+// next play opens it again. 0, the default, keeps it open.
+func (e *Engine) SetIdleRelease(d time.Duration) { e.set(func() { e.idle = d }) }
 
 // SetProcessor puts p in the output path, from the next chunk on; nil takes
 // any out. Both the foreground and the background player play through the
@@ -402,6 +413,9 @@ func (e *Engine) loop() {
 			}
 			continue
 		case e.cur == nil || e.paused:
+			if !e.quiet && e.idle > 0 {
+				e.releaseWhenIdle(e.idle, e.played)
+			}
 			if e.paused && !e.quiet {
 				e.mu.Unlock()
 				dropped, _ := e.out.Drop()
@@ -438,6 +452,7 @@ func (e *Engine) loop() {
 		cur, rate, replay, back := e.cur, e.st.Rate, e.replay, e.back
 		frame, fo, fe, proc := e.st.Frame, e.fadeOut, e.fadeEnd, e.proc
 		e.replay, e.back, e.quiet = 0, 0, false
+		e.played++
 		e.mu.Unlock()
 
 		if replay > 0 {
@@ -533,6 +548,18 @@ func (e *Engine) loop() {
 		}
 		e.report(end)
 	}
+}
+
+// releaseWhenIdle asks the loop, after d, to close the output, if nothing has
+// played since played and playback is still paused or stopped. Called locked.
+func (e *Engine) releaseWhenIdle(d time.Duration, played uint64) {
+	time.AfterFunc(d, func() {
+		e.set(func() {
+			if e.played == played && (e.cur == nil || e.paused) && e.release == nil && !e.closed {
+				e.release = make(chan struct{}) // no one waits on it: the loop just closes
+			}
+		})
+	})
 }
 
 // write opens the device if needed and writes pcm.
