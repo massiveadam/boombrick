@@ -339,6 +339,46 @@ Compared:
   running Boombrick noticing a sync (it rescans the library at every start;
   `rgsp-sync` leaves a `.rgsp-sync/last-change` stamp for this).
 
+## Phase 6 — terminal and voice (server side done; device side unverified)
+
+The handheld as a pocket terminal for coding agents that run on the home
+server. Running them on the handheld is ruled out for Claude Code (its docs
+ask for 4 GB of RAM; the RG SP has 1 GB) and only an experiment for Codex
+(an aarch64 musl build exists; memory use and its sandbox on the vendor
+kernel are unknown).
+
+```
+RG SP: terminal Port ──ssh over Tailscale──▶ server: tmux "pocket" ─ claude / codex
+       rgsp-voice ptt ──WAV over Tailscale──▶ server: rgsp-voice serve ─▶ speaches (faster-whisper)
+                                                         └─ tmux send-keys -l (typed, not entered)
+```
+
+- **`rgsp-voice serve`** (server): takes a WAV clip, transcribes it through
+  any OpenAI-compatible endpoint, types the text into a tmux pane. Newlines
+  and control characters are removed and nothing is entered: Enter is a
+  separate request, after reading. Only named keys (enter, clear, escape,
+  backspace, arrows, tab) can be sent. Needs a token of 16+ characters and
+  refuses to listen on every interface.
+- **`rgsp-voice ptt`** (device): hold a button to record (arecord, 16 kHz
+  mono), let go to send; other buttons send Enter or clear the line. Reads
+  the buttons from evdev without grabbing them. `rgsp-voice keys` prints
+  button codes. Built static into the RG SP package.
+- **Verified on sanchez:** speaches (CPU image, faster-whisper `small.en`)
+  on loopback; a synthesized 4.5 s prompt came back word for word in
+  3.6–5.4 s with six cores busy elsewhere, and appeared in tmux unentered
+  until Enter. Unit tests cover the cleaning, the key list, the token, WAV
+  checks and the button logic; a test types into a real tmux.
+- **Unverified (needs the device):** a microphone. None is listed for the
+  RG SP; options are a USB-C mic if the port does host mode, or a Bluetooth
+  headset's mic through BlueALSA's HFP (8–16 kHz, incomplete support).
+  `rgsp-probe` now reports capture devices, USB host or gadget mode,
+  Bluetooth adapters, uinput, user namespaces, memory and the kernel options
+  these need.
+- **Not done:** the terminal Port itself (candidates: rgterm, which has a
+  D-pad keyboard but no alternate screen, so no tmux or full-screen TUIs
+  yet; Terminal.pak for NextUI), and running `rgsp-voice serve` as a
+  service on the server.
+
 ## What remains unverified
 
 - Everything on RG SP hardware: the open questions above, Bluetooth and
