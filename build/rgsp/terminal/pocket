@@ -1,0 +1,27 @@
+#!/bin/sh
+# Opens (or rejoins) the coding agents' tmux session on the server. Type
+# `pocket` in the terminal. Settings are in config.sh.
+DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$DIR/config.sh"
+TS="$(dirname "$DIR")/tailscale"
+target=${1:-$POCKET_SSH}
+proxy=
+# Tailscale in userspace mode routes nothing by itself: go through it.
+if [ -x "$TS/tailscale" ] && [ -S /tmp/rgsp-tailscale/tailscaled.sock ]; then
+	proxy="$TS/tailscale --socket=/tmp/rgsp-tailscale/tailscaled.sock nc %h %p"
+fi
+if command -v ssh > /dev/null; then
+	if [ -n "$proxy" ]; then
+		exec ssh -o ProxyCommand="$proxy" -t "$target" "tmux new -As $POCKET_SESSION"
+	fi
+	exec ssh -t "$target" "tmux new -As $POCKET_SESSION"
+fi
+if command -v dbclient > /dev/null; then
+	host=${target#*@}
+	if [ -n "$proxy" ]; then
+		exec dbclient -J "$(echo "$proxy" | sed "s/%h/$host/; s/%p/22/")" -t "$target" "tmux new -As $POCKET_SESSION"
+	fi
+	exec dbclient -t "$target" "tmux new -As $POCKET_SESSION"
+fi
+echo "No SSH client here (ssh or dbclient). rgsp-probe's report says what the device has." >&2
+exit 1

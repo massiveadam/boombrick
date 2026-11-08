@@ -374,10 +374,28 @@ RG SP: terminal Port ──ssh over Tailscale──▶ server: tmux "pocket" ─
   `rgsp-probe` now reports capture devices, USB host or gadget mode,
   Bluetooth adapters, uinput, user namespaces, memory and the kernel options
   these need.
-- **Not done:** the terminal Port itself (candidates: rgterm, which has a
-  D-pad keyboard but no alternate screen, so no tmux or full-screen TUIs
-  yet; Terminal.pak for NextUI), and running `rgsp-voice serve` as a
-  service on the server.
+- **Terminal Port (built, not run on the device):** `build/rgsp/terminal/build.sh`
+  makes `dist/Terminal-RGSP.zip`: TermSP (the terminal Terminal.pak wraps
+  for NextUI, which lists the RG SP) built from source for plorpOS, with
+  libvterm, SDL_fox (no fontconfig: BaseOS lacks it) and a bare FreeType
+  compiled in; it needs only SDL2 (shipped), libutil and libc, nothing past
+  glibc 2.35. `termsp-rgsp.patch` switches on libvterm's alternate screen
+  (upstream never does, so tmux and full-screen TUIs would leave garbage; a
+  test against the same libvterm shows the shell's screen restored after a
+  full-screen program with it, and not without), maps the RG SP's buttons
+  (A types, B backspace, Y keyboard, X moves it, L1 shift, R1 modifiers,
+  Start Enter, Select Tab, Menu quits; L2 and R2 left for push-to-talk), and
+  sets this Port's paths. `pocket` opens the server's tmux session over SSH
+  through `tailscale nc` (userspace Tailscale routes nothing by itself);
+  launch starts `rgsp-voice ptt` beside the terminal when `config.sh` sets it
+  up. Whether BaseOS has an SSH client (ssh or dropbear's dbclient) is
+  unknown: the probe reports it.
+- **Not done:** running `rgsp-voice serve` as a service (it's one command;
+  it waits for a mic to exist). Reviewed by Codex, which suggested bracketed
+  paste (done), routing through Tailscale's proxy (done), and t3code-threads
+  (a CLI for T3 Code threads over its WebSocket API) as a later, structured
+  alternative to typing into a TUI; it imports T3's internal contracts, so
+  it may break with T3 updates.
 
 ## What remains unverified
 

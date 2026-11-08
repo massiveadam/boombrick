@@ -82,3 +82,14 @@ build also uses, from plorpOS (https://github.com/thwonp/plorpOS):
 Tailscale-RGSP.zip, optional, holds Tailscale's own static build:
 
   Tailscale 1.104.5            BSD-3-Clause          https://tailscale.com (tailscale/LICENSE)
+
+Terminal-RGSP.zip, optional, is a terminal built from source with
+build/rgsp/terminal/termsp-rgsp.patch (alternate screen, RG SP buttons,
+paths); terminal/LICENSES.txt holds each licence:
+
+  TermSP 5116aed               MIT                   https://github.com/Nevrdid/TermSP
+  libvterm 0.3.3               MIT                   in TermSP's tree
+  SDL_fox 8eb043d              MIT                   https://github.com/palomena/SDL_fox
+  FreeType 2.13.3              FTL                   https://freetype.org
+  Hack 3.003 fonts             MIT, Bitstream Vera   https://github.com/source-foundry/Hack
+  Input mapping, after         MIT                   https://github.com/josegonzalez/minui-terminal-pak
