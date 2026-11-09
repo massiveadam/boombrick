@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/ujjwal313/boombrick/internal/platform"
 	"github.com/ujjwal313/boombrick/internal/player"
 	"github.com/ujjwal313/boombrick/internal/resume"
+	"github.com/ujjwal313/boombrick/internal/scrobble"
 	"github.com/ujjwal313/boombrick/internal/settings"
 	"github.com/ujjwal313/boombrick/internal/store"
 )
@@ -36,6 +38,9 @@ func runBackground() error {
 	prof := platform.Detect(dir)
 	firmware = prof.Firmware
 	paths := prof.Paths
+	if firmware == platform.RGSP {
+		outputs = newOutputChoice(paths.Data)
+	}
 	logPath := filepath.Join(paths.Logs, "Boombrick.txt")
 	logFile, err := logx.Open(logPath, 1<<20, 1)
 	if err != nil {
@@ -82,6 +87,8 @@ func runBackground() error {
 	} else {
 		p.SetProcessor(eq.Processor())
 		log.Info("equaliser", "profile", eq.Name(), "bypassed", eq.Bypassed())
+		followOutputs(eq, log)
+		defer eq.Flush() // what changed on a switch, for Boombrick to open
 	}
 
 	snap, ok, err := resume.Load(db.DB)
@@ -103,6 +110,15 @@ func runBackground() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	saver := resume.NewSaver(db.DB)
+	// plorpOS, told the music plays, keeps it playing as the screen goes off,
+	// and sends its volume keys' music controls here.
+	// Listening first: an unasked-for SIGUSR1 would end this process.
+	held := obeyControls(ctx, prof.CommandFile(), p, log, true)
+	if sc := scrobble.New(db.DB, paths.Data, log); sc != nil {
+		go sc.Run(ctx, p)
+	}
+	announced := announcePlaying(ctx, prof.PlayingFile(), p)
+	defer announced()
 	err = background.Run(ctx, background.Options{
 		Player:     p,
 		Save:       saver.Save,
@@ -115,6 +131,7 @@ func runBackground() error {
 		SaveEvery:  5 * time.Second,
 		StallLimit: 2 * time.Minute,
 		SoundUsers: func() []string { return platform.SoundUsers("/proc") },
+		Held:       held,
 	})
 	log.Info("background play ended", "err", err)
 	return err
@@ -158,5 +175,62 @@ func closeInherited() {
 		if errno == 0 && flags&syscall.FD_CLOEXEC == 0 {
 			syscall.Close(fd)
 		}
+	}
+}
+
+// announcePlaying keeps path saying, while p plays, that this process's music
+// plays (platform.Announce). The function it returns stops that and waits
+// until the file is cleared.
+func announcePlaying(ctx context.Context, path string, p *player.Player) func() {
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		platform.Announce(ctx, path, 500*time.Millisecond, func() bool { return p.State().Playing })
+	}()
+	return func() { cancel(); <-done }
+}
+
+// holdLimit is how long the background player waits, paused from the
+// volume keys, to be played again before it saves its place and ends.
+const holdLimit = 30 * time.Minute
+
+// obeyControls carries out the music controls plorpOS sends (toggle, pause,
+// next, prev: its volume keys, and a headset's own buttons and ear detection)
+// on p until ctx ends. The returned function reports whether the music
+// was paused by one and is waiting, up to holdLimit, to be played again. In
+// the background player (release) a pause lets go of the sound card, so a
+// game can have it meanwhile; playing opens it again.
+func obeyControls(ctx context.Context, path string, p *player.Player, log *slog.Logger, release bool) func() bool {
+	var pausedAt atomic.Int64 // unix nanoseconds of the pause; 0 not paused by a control
+	cmds := platform.Commands(ctx, path)
+	go func() {
+		for c := range cmds {
+			log.Info("music control", "do", c)
+			switch c {
+			case "toggle", "pause":
+				playing := p.State().Playing
+				if c == "pause" && !playing {
+					continue // a pause that finds the music paused does nothing
+				}
+				p.Toggle()
+				if playing {
+					pausedAt.Store(time.Now().UnixNano())
+					if release {
+						p.Release()
+					}
+				} else {
+					pausedAt.Store(0)
+				}
+			case "next":
+				p.Next()
+			case "prev":
+				p.Prev()
+			}
+		}
+	}()
+	return func() bool {
+		at := pausedAt.Load()
+		return at != 0 && time.Since(time.Unix(0, at)) < holdLimit && !p.State().Playing
 	}
 }

@@ -52,6 +52,32 @@ func (b *Backlight) Off() error {
 	return nil
 }
 
+// dimBrightness is the dimmest the driver is asked for: 1, below the bottom
+// rung of plorpOS's ladder (2, src/platform_h700.c bright_ladder). 0 is off.
+const dimBrightness = 1
+
+// Dim turns the light down to level, still lit (at least dimBrightness),
+// remembering how bright it was; On puts it back, as after Off. A light
+// already as dim is left alone.
+func (b *Backlight) Dim(level int) error {
+	level = max(level, dimBrightness)
+	if b.off {
+		return nil
+	}
+	v, err := b.dev.brightness()
+	if err != nil {
+		return err
+	}
+	if v <= level {
+		return nil // as dim already: nothing to put back
+	}
+	if err := b.dev.setBrightness(level); err != nil {
+		return err
+	}
+	b.saved, b.off = v, true
+	return nil
+}
+
 // On puts the light back as it was before Off.
 func (b *Backlight) On() error {
 	if !b.off {

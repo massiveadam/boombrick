@@ -31,12 +31,18 @@ type Actions struct {
 	PlayInBackground func()
 	// OpenEQ opens the Equalizer; without it the row never shows.
 	OpenEQ func()
+	// Output is where the sound goes, as the Output row shows it, and
+	// StepOutput moves the choice on (◀ ▶, or A for the next); without them
+	// the row never shows.
+	Output     func() string
+	StepOutput func(step int)
 }
 
 // The rows, top to bottom.
 const (
 	rowSleep = iota
 	rowEQ
+	rowOutput
 	rowScreen
 	rowBackground
 	rowSettings
@@ -73,6 +79,7 @@ func New(act Actions) *Menu {
 	m.rows = [rowCount]widgets.Setting{
 		rowSleep:      {Icon: "moon", Label: "Sleep timer"},
 		rowEQ:         {Icon: "sliders", Label: "Equalizer", Chevron: true},
+		rowOutput:     {Icon: "volume", Label: "Output"},
 		rowScreen:     {Icon: "power", Label: "Screen off"},
 		rowBackground: {Icon: "music", Label: "Play in background"},
 		rowSettings:   {Icon: "settings", Label: "Settings", Chevron: true},
@@ -81,6 +88,7 @@ func New(act Actions) *Menu {
 	m.hints = [rowCount][]widgets.Hint{
 		rowSleep:      {{Key: "◀ ▶", Label: "Change"}, {Key: "B", Label: "Close"}},
 		rowEQ:         {{Key: "A", Label: "Open"}, {Key: "B", Label: "Close"}},
+		rowOutput:     {{Key: "◀ ▶", Label: "Change"}, {Key: "B", Label: "Close"}},
 		rowScreen:     {{Key: "A", Label: "Turn off"}, {Key: "B", Label: "Close"}},
 		rowBackground: {{Key: "A", Label: "Play in background"}, {Key: "B", Label: "Close"}},
 		rowSettings:   {{Key: "A", Label: "Open"}, {Key: "B", Label: "Close"}},
@@ -96,6 +104,7 @@ func (m *Menu) Open(now time.Time) {
 		switch {
 		case r == rowBackground && (m.act.PlayInBackground == nil || m.act.Playing == nil || !m.act.Playing()):
 		case r == rowEQ && m.act.OpenEQ == nil:
+		case r == rowOutput && (m.act.Output == nil || m.act.StepOutput == nil):
 		default:
 			m.visible = append(m.visible, r)
 		}
@@ -131,14 +140,18 @@ func (m *Menu) Handle(ev input.Event, now time.Time) bool {
 	case input.Down:
 		return m.move(1, now)
 	case input.Left, input.Right:
-		if m.focus != rowSleep {
-			return false
-		}
 		step := 1
 		if ev.Button == input.Left {
 			step = -1
 		}
-		m.act.SetSleep(screens.NextSleep(m.act.Sleep().Mode, step))
+		switch m.focus {
+		case rowSleep:
+			m.act.SetSleep(screens.NextSleep(m.act.Sleep().Mode, step))
+		case rowOutput:
+			m.act.StepOutput(step)
+		default:
+			return false
+		}
 		return true
 	}
 	if ev.Kind != input.Press {
@@ -176,6 +189,8 @@ func (m *Menu) do(now time.Time) {
 	case rowEQ:
 		m.close(now)
 		m.act.OpenEQ()
+	case rowOutput:
+		m.act.StepOutput(1)
 	case rowScreen:
 		m.close(now)
 		m.act.ScreenOff()
@@ -219,6 +234,7 @@ func (m *Menu) Draw(u *ui.Context) {
 		return
 	}
 	m.refresh(u.Now)
+	m.refreshOutput()
 	h := padTop + u.LineHeight(title) + 20 + float32(len(m.visible)*widgets.SettingHeight) + padTop
 	p := widgets.BeginPanel(u, h, shown)
 	box := p.Box
@@ -250,4 +266,11 @@ func (m *Menu) refresh(now time.Time) {
 	m.sleep, m.at = s, now
 	m.rows[rowSleep].Value = screens.SleepValue(s, now)
 	m.rows[rowSleep].Active = s.Mode != player.SleepOff
+}
+
+// refreshOutput writes the Output row's value: where the sound goes now.
+func (m *Menu) refreshOutput() {
+	if m.act.Output != nil {
+		m.rows[rowOutput].Value = m.act.Output()
+	}
 }

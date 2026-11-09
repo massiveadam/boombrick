@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"log/slog"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,6 +35,7 @@ import (
 	settingsscreen "github.com/ujjwal313/boombrick/internal/screens/settings"
 	spotifyscreen "github.com/ujjwal313/boombrick/internal/screens/spotify"
 	"github.com/ujjwal313/boombrick/internal/screens/youtube"
+	keys "github.com/ujjwal313/boombrick/internal/settings"
 	"github.com/ujjwal313/boombrick/internal/spotify"
 	"github.com/ujjwal313/boombrick/internal/theme"
 	"github.com/ujjwal313/boombrick/internal/ui"
@@ -41,6 +43,13 @@ import (
 	"github.com/ujjwal313/boombrick/internal/ui/text"
 	"github.com/ujjwal313/boombrick/internal/ui/widgets"
 )
+
+// OutputChoice is where the sound goes, as a label, and a step to the next
+// choice of output.
+type OutputChoice interface {
+	Label() string
+	Step(step int)
+}
 
 // Options configure the app.
 type Options struct {
@@ -88,6 +97,11 @@ type Options struct {
 	// Space measures and clears the caches for Settings' Storage page; nil
 	// leaves the page out.
 	Space Space
+	// DimAfter, set, offers dimming: the screen dims once music plays for
+	// Settings' Dim after with no button pressed, to its Dim level, and the
+	// next press only brings it back. Its value is the default those settings
+	// fall back on. 0 never dims, nor does a Backlight that can't (Dimmer).
+	DimAfter time.Duration
 	// Backlight turns the screen's light off and on. Without it, or when it
 	// fails, a screen turned off is drawn black instead, as on a desktop.
 	Backlight Backlight
@@ -136,6 +150,9 @@ type Options struct {
 	// EQ is the equaliser the quick menu's Equalizer opens. Without it the
 	// row never shows.
 	EQ eqscreen.Source
+	// Output is the choice of where the sound goes (the RG SP's quick menu
+	// Output row); nil where the firmware routes it.
+	Output OutputChoice
 	// Script drives the app on a desktop, for tests and screenshots; see
 	// script.go. "" for none.
 	Script string
@@ -165,6 +182,12 @@ type Space interface {
 type Backlight interface {
 	Off() error
 	On() error
+}
+
+// Dimmer is a light that can also be turned down, still lit, to a level;
+// On brings it back. *platform.Backlight is one.
+type Dimmer interface {
+	Dim(level int) error
 }
 
 // Fonts keeps the fonts downloaded for other scripts and emoji, and fetches
@@ -261,6 +284,9 @@ type App struct {
 	drawnAt    time.Time // the start of the frame drawn last
 	dark       bool      // the screen is off: nothing is drawn and only Power is heard
 	lightOff   bool      // the backlight was turned off, to be turned on again
+	touched    time.Time // the last button pressed, for DimAfter
+	dimmed     bool      // the light is down to its dimmest (DimAfter)
+	dimBlack   bool      // and the picture black: Dim level's Black
 	powerAt    time.Time // when Power went down, while it is held
 	scanEnded  bool      // a scan has ended, so an empty index is the library
 	wasAnim    bool
@@ -461,6 +487,9 @@ func (a *App) quickMenu() *quickmenu.Menu {
 	if a.opts.Background != nil {
 		act.PlayInBackground = a.playInBackground
 	}
+	if a.opts.Output != nil {
+		act.Output, act.StepOutput = a.opts.Output.Label, a.opts.Output.Step
+	}
 	if a.opts.EQ != nil {
 		at := a.shell.add(overlay{button: input.None, screen: eqscreen.New(a.opts.EQ, a.Toast)})
 		act.OpenEQ = func() { a.shell.openOverlay(at, time.Now()) }
@@ -468,6 +497,9 @@ func (a *App) quickMenu() *quickmenu.Menu {
 	if a.opts.Prefs != nil {
 		o := settingsscreen.Options{Prefs: a.opts.Prefs, Player: a.opts.Player, Card: a.card, Toast: a.Toast,
 			Version: a.opts.Version, Device: a.opts.Device, Quit: func() { a.quit = true }}
+		if _, ok := a.opts.Backlight.(Dimmer); ok && a.opts.DimAfter > 0 {
+			o.Dimming = true
+		}
 		if a.opts.Space != nil {
 			o.Space = a.opts.Space
 			a.forward(a.opts.Space.Ready(), &a.redraw)
@@ -595,6 +627,13 @@ func (a *App) Run() error {
 			continue // powering off
 		}
 		a.poll()
+		a.dimIdle(now)
+		if a.dimmed && a.dimBlack {
+			a.darkFrame() // black, the light at its lowest: as near off as on can be
+			a.wasAnim = false
+			a.wait(now)
+			continue
+		}
 		if a.dark {
 			a.darkFrame()
 			a.wasAnim = false
@@ -897,6 +936,9 @@ func (a *App) timeout(start, now time.Time) time.Duration {
 	}
 	if a.last.Playing {
 		timeout = min(timeout, start.Add(tickFor(a.shell.overlay())).Sub(now))
+		if at, ok := a.dimDue(); ok {
+			timeout = min(timeout, at.Sub(now))
+		}
 	}
 	if next, ok := a.repeat.Next(); ok {
 		timeout = min(timeout, next.Sub(now))
@@ -1015,6 +1057,13 @@ func (a *App) dispatch(e input.Event) {
 	if int(e.Button) < len(a.down) {
 		a.down[e.Button] = e.Kind != input.Release
 	}
+	if e.Kind == input.Press {
+		a.touched = now
+		if a.dimmed && e.Button != input.Power {
+			a.undim() // the press only brings the light back
+			return
+		}
+	}
 	if e.Button == input.Power {
 		if !a.opts.FirmwarePower {
 			a.power(e, now)
@@ -1060,6 +1109,23 @@ func (a *App) playInBackground() {
 	}()
 }
 
+// PlayOnAndQuit hands the music to the background player, as Play in
+// background does, and quits either way: for a launcher closing the app while
+// it plays. Without a background player, or with a hand-over already under
+// way, it only quits. Safe from any goroutine.
+func (a *App) PlayOnAndQuit() {
+	if a.opts.Background == nil || !a.handing.CompareAndSwap(false, true) {
+		a.Quit()
+		return
+	}
+	go func() {
+		if err := a.opts.Background(); err != nil {
+			a.opts.Log.Warn("play on when closed", "err", err)
+		}
+		a.Quit()
+	}()
+}
+
 // backgroundNews says once that handing the music over failed.
 func (a *App) backgroundNews() {
 	if a.handFailed.Swap(false) {
@@ -1090,6 +1156,7 @@ func (a *App) setDark(dark bool) {
 		return
 	}
 	a.dark, a.dirty = dark, true
+	a.dimmed, a.touched = false, time.Now() // the light is Off's to keep, or On's to bring back
 	if a.lit != nil {
 		select {
 		case <-a.lit:
@@ -1210,4 +1277,75 @@ func (a *App) volumeNews(now time.Time) {
 		a.shell.showVolume(int(v-1), now)
 		a.dirty = true
 	}
+}
+
+// dimmer is the backlight's dimming, when there is one, DimAfter offers it
+// and Settings hasn't switched it off.
+func (a *App) dimmer() (Dimmer, bool) {
+	if a.opts.DimAfter <= 0 || a.opts.Backlight == nil || a.dimAfter() <= 0 {
+		return nil, false
+	}
+	d, ok := a.opts.Backlight.(Dimmer)
+	return d, ok
+}
+
+// dimAfter is Settings' Dim after, DimAfter without one.
+func (a *App) dimAfter() time.Duration {
+	if a.opts.Prefs == nil {
+		return a.opts.DimAfter
+	}
+	n, err := strconv.Atoi(a.opts.Prefs.String(keys.DimAfter))
+	if err != nil || n < 0 {
+		return a.opts.DimAfter
+	}
+	return time.Duration(n) * time.Second
+}
+
+// dimLevel is Settings' Dim level: the brightness the screen dims to.
+func (a *App) dimLevel() int {
+	if a.opts.Prefs == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(a.opts.Prefs.String(keys.DimLevel))
+	return n
+}
+
+// dimDue is when the screen dims, while music plays undimmed.
+func (a *App) dimDue() (time.Time, bool) {
+	if _, ok := a.dimmer(); !ok || a.dimmed || a.dark {
+		return time.Time{}, false
+	}
+	if a.touched.IsZero() {
+		a.touched = time.Now()
+	}
+	return a.touched.Add(a.dimAfter()), true
+}
+
+// dimIdle dims the screen once music has played DimAfter with no press.
+func (a *App) dimIdle(now time.Time) {
+	if !a.last.Playing {
+		return
+	}
+	at, ok := a.dimDue()
+	if !ok || now.Before(at) {
+		return
+	}
+	d, _ := a.dimmer()
+	level := a.dimLevel()
+	if err := d.Dim(level); err != nil {
+		a.opts.Log.Info("the screen stays bright", "err", err)
+		a.touched = now // not again at once
+		return
+	}
+	a.dimmed, a.dimBlack = true, level == 0
+	a.dirty = true // the black frame, for Black
+}
+
+// undim brings the light back after dimIdle.
+func (a *App) undim() {
+	a.dimmed, a.dimBlack = false, false
+	if err := a.opts.Backlight.On(); err != nil {
+		a.opts.Log.Warn("brighten the screen", "err", err)
+	}
+	a.dirty = true
 }

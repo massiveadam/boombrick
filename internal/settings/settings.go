@@ -17,6 +17,10 @@ const (
 	DownloadQuality  = "downloads.quality"
 	PreferDownloaded = "playback.prefer_downloaded"
 	VolumeLevelling  = "playback.volume_levelling"
+	// DimAfter is how long music plays untouched before the screen dims, in
+	// seconds, "0" never; DimLevel the brightness it dims to (the RG SP's).
+	DimAfter = "display.dim_after"
+	DimLevel = "display.dim_level"
 )
 
 // Defaults holds the value used for a key that has never been set.
@@ -25,6 +29,8 @@ var Defaults = map[string]string{
 	DownloadQuality:  "best",
 	PreferDownloaded: "true",
 	VolumeLevelling:  "true",
+	DimAfter:         "30",
+	DimLevel:         "2",
 }
 
 // Settings keeps the table in memory and writes changes behind the caller.

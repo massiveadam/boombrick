@@ -58,6 +58,10 @@ type Options struct {
 	// SoundUsers lists the programs that have the sound card open, for the
 	// log when it fails; nil lists none.
 	SoundUsers func() []string
+	// Held reports whether the music was paused on purpose, as from the
+	// RG SP's volume keys, and is to wait to be played again rather than count
+	// as stopped; nil is never.
+	Held func() bool
 }
 
 // Run plays the queue its player has restored until ctx ends, as Boombrick
@@ -118,6 +122,8 @@ func Run(ctx context.Context, o Options) error {
 				every = o.Every
 				tick.Reset(every)
 			}
+		case o.Held != nil && o.Held():
+			hushed, silent = false, 0
 		default:
 			if hushed {
 				silent += every

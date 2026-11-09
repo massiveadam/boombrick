@@ -34,6 +34,7 @@ import (
 	"github.com/ujjwal313/boombrick/internal/player"
 	"github.com/ujjwal313/boombrick/internal/release"
 	"github.com/ujjwal313/boombrick/internal/resume"
+	"github.com/ujjwal313/boombrick/internal/scrobble"
 	"github.com/ujjwal313/boombrick/internal/selfupdate"
 	"github.com/ujjwal313/boombrick/internal/settings"
 	"github.com/ujjwal313/boombrick/internal/space"
@@ -86,6 +87,9 @@ func run(started time.Time) error {
 	prof := platform.Detect(dir)
 	firmware = prof.Firmware
 	paths := prof.Paths
+	if firmware == platform.RGSP {
+		outputs = newOutputChoice(paths.Data)
+	}
 	for _, d := range []string{paths.Data, paths.Logs} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err
@@ -116,6 +120,9 @@ func run(started time.Time) error {
 		return err
 	}
 	defer db.Close()
+	if db.SetAside != "" {
+		log.Warn("the database was damaged: set aside, and a new one made; the library is scanned again", "aside", db.SetAside)
+	}
 	prefs, err := settings.Load(db.DB, log)
 	if err != nil {
 		return err
@@ -284,6 +291,7 @@ func run(started time.Time) error {
 	defer eq.Flush()
 	p.SetProcessor(eq.Processor())
 	log.Info("equaliser", "profile", eq.Name(), "bypassed", eq.Bypassed(), "bands", len(eq.Profile().Filters))
+	followOutputs(eq, log)
 
 	// A background player gives the music back before the saved queue is
 	// read; neither must hold up the first frame. Every later release keeps
@@ -430,6 +438,7 @@ func run(started time.Time) error {
 		Prefs:         prefs,
 		Space:         meter,
 		Backlight:     light,
+		DimAfter:      prof.DimAfter(),
 		PowerOff:      powerOff,
 		FirmwarePower: prof.FirmwarePower(),
 		QuitChord:     prof.QuitChord(),
@@ -463,6 +472,9 @@ func run(started time.Time) error {
 	if volume != nil {
 		opts.Volume = volume
 	}
+	if outputs != nil {
+		opts.Output = outputs
+	}
 	if features.Streaming {
 		opts.Thumbs, opts.YouTube, opts.Downloads = thumbs, yt, dl
 		opts.Spotify, opts.Importer = spLib, im
@@ -489,17 +501,48 @@ func run(started time.Time) error {
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 	// The first signal quits; if that hangs, or a second signal comes, the
 	// process exits regardless.
+	// Where closing the port is the way out (the RG SP), music that plays goes
+	// on in the background player: started in a session of its own, it
+	// outlives the launcher's KILL of this process group.
+	playOn := prof.PlayOnWhenClosed()
 	go func() {
 		<-sig
-		a.Quit()
-		select {
-		case <-sig:
-			log.Warn("second signal, exiting")
-		case <-time.After(3 * time.Second):
-			log.Error("quit timed out")
+		handing := playOn && p.State().Playing
+		if handing {
+			log.Info("closed while playing: playing on in the background")
+			a.PlayOnAndQuit()
+		} else {
+			a.Quit()
+		}
+		// plorpOS signals the launcher script too, which passes its signal on:
+		// two come at once. A hand-over isn't cut short by that one, only by
+		// the time limit, which is the launcher's own KILL's.
+		limit := time.After(3 * time.Second)
+		for {
+			select {
+			case <-sig:
+				if handing {
+					continue
+				}
+				log.Warn("second signal, exiting")
+			case <-limit:
+				log.Error("quit timed out")
+			}
+			break
 		}
 		os.Exit(1)
 	}()
+	// plorpOS, told the music plays, keeps it playing as the screen goes off.
+	// Listening first: an unasked-for SIGUSR1 would end this process.
+	ctlCtx, ctlStop := context.WithCancel(context.Background())
+	defer ctlStop()
+	// Last.fm, with lastfm.json in the data folder.
+	if sc := scrobble.New(db.DB, paths.Data, log); sc != nil {
+		go sc.Run(ctlCtx, p)
+	}
+	obeyControls(ctlCtx, prof.CommandFile(), p, log, false)
+	announced := announcePlaying(context.Background(), prof.PlayingFile(), p)
+	defer announced()
 	return a.Run()
 }
 

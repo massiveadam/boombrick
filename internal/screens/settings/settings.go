@@ -67,6 +67,7 @@ type Options struct {
 	Quit         func()     // the Update ready dialog's Quit now
 	Spotify      Account    // nil: no Streaming quality, nor the Accounts card
 	Copies       bool       // importing exists: Prefer downloaded copies is shown
+	Dimming      bool       // the screen can dim while music plays: Dim after and Dim level are shown
 }
 
 // What focus moves between, top to bottom: the rows, then the cards' pills.
@@ -77,6 +78,8 @@ const (
 	rowStorage
 	rowSleep
 	rowLevelling
+	rowDimAfter
+	rowDimLevel
 	rowCount
 	pillTool    = rowCount     // the Downloader card's pill
 	pillApp     = rowCount + 1 // the Boombrick card's
@@ -111,6 +114,20 @@ type choice struct {
 var qualities = []choice{
 	{"Best", "Opus · about 72 MB per hour", "best"},
 	{"Smaller", "Opus · about 32 MB per hour", "smaller"},
+}
+
+// dimAfters are Dim after's options: how long music plays untouched before
+// the screen dims, in seconds.
+var dimAfters = []choice{
+	{"Off", "", "0"}, {"15 s", "", "15"}, {"30 s", "", "30"},
+	{"1 min", "", "60"}, {"2 min", "", "120"}, {"5 min", "", "300"},
+}
+
+// dimLevels are Dim level's options: the brightness dimmed to, 0 to 255,
+// and Black - the lowest light behind a black picture.
+var dimLevels = []choice{
+	{"Black", "", "0"}, {"1", "", "1"}, {"2", "", "2"},
+	{"4", "", "4"}, {"8", "", "8"}, {"16", "", "16"},
 }
 
 // streams are Streaming quality's options.
@@ -162,6 +179,8 @@ func New(opts Options) *Screen {
 		rowStorage:   {Icon: "sd", Label: "Storage", Chevron: true},
 		rowSleep:     {Icon: "moon", Label: "Sleep timer"},
 		rowLevelling: {Icon: "sliders", Label: "Volume levelling"},
+		rowDimAfter:  {Icon: "sun", Label: "Dim after"},
+		rowDimLevel:  {Icon: "sun", Label: "Dim level"},
 	}
 	for _, m := range player.SleepModes {
 		s.sleeps = append(s.sleeps, choice{label: screens.SleepLabel(m)})
@@ -205,6 +224,18 @@ func (s *Screen) readPrefs() {
 	s.rows[rowQuality].Value = qualities[s.quality].label
 	s.rows[rowLevelling].Value = onOff(s.opts.Prefs.Bool(keys.VolumeLevelling))
 	s.rows[rowPrefer].Value = onOff(s.opts.Prefs.Bool(keys.PreferDownloaded))
+	s.rows[rowDimAfter].Value = dimAfters[pick(dimAfters, s.opts.Prefs.String(keys.DimAfter), 2)].label
+	s.rows[rowDimLevel].Value = dimLevels[pick(dimLevels, s.opts.Prefs.String(keys.DimLevel), 2)].label
+}
+
+// pick is the index of the choice with value v, or def when none has it.
+func pick(cs []choice, v string, def int) int {
+	for i, c := range cs {
+		if c.value == v {
+			return i
+		}
+	}
+	return def
 }
 
 // shown reports whether an item is shown: Storage only with something to
@@ -217,6 +248,8 @@ func (s *Screen) shown(item int) bool {
 		return s.opts.Copies
 	case rowStorage:
 		return s.opts.Space != nil
+	case rowDimAfter, rowDimLevel:
+		return s.opts.Dimming
 	case pillTool:
 		return s.opts.Downloader != nil
 	case pillApp:
@@ -287,7 +320,7 @@ func (s *Screen) move(step int, now time.Time) bool {
 // opens Storage, switches levelling, or presses a card's pill.
 func (s *Screen) act(now time.Time) bool {
 	switch s.focus {
-	case rowStream, rowQuality, rowSleep:
+	case rowStream, rowQuality, rowSleep, rowDimAfter, rowDimLevel:
 		if s.open == s.focus {
 			s.open = -1
 		} else {
@@ -344,6 +377,17 @@ func (s *Screen) choose(step int) bool {
 			return false
 		}
 		s.opts.Player.SetSleep(player.SleepModes[i])
+	case rowDimAfter, rowDimLevel:
+		cs, key := dimAfters, keys.DimAfter
+		if s.open == rowDimLevel {
+			cs, key = dimLevels, keys.DimLevel
+		}
+		i := pick(cs, s.opts.Prefs.String(key), 2) + step
+		if i < 0 || i >= len(cs) {
+			return false
+		}
+		s.opts.Prefs.Set(key, cs[i].value)
+		s.readPrefs()
 	default:
 		return false
 	}
@@ -631,6 +675,10 @@ func (s *Screen) options(row int) (choices []choice, chosen int, about string, c
 		return streams, s.stream, "Spotify, over Wi-Fi or hotspot", 3
 	case rowQuality:
 		return qualities, s.quality, "YouTube Music downloads", 2
+	case rowDimAfter:
+		return dimAfters, pick(dimAfters, s.opts.Prefs.String(keys.DimAfter), 2), "While music plays and no button is pressed", 3
+	case rowDimLevel:
+		return dimLevels, pick(dimLevels, s.opts.Prefs.String(keys.DimLevel), 2), "Brightness when dimmed · the next press brings it back", 3
 	}
 	return s.sleeps, s.sleepIndex(), "Fades out, then pauses", 4
 }

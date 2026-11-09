@@ -130,3 +130,35 @@ func TestPowerOffOnADesktop(t *testing.T) {
 		t.Fatalf("wrote %d files", len(entries))
 	}
 }
+
+// Dim lowers the light to its dimmest, still lit, and On brings back the level
+// it had; screen off from dim, then on, still comes back to that level.
+func TestBacklightDim(t *testing.T) {
+	p := &panel{level: 160}
+	b := &Backlight{dev: p}
+	if err := b.Dim(0); err != nil || p.level != dimBrightness {
+		t.Fatalf("dim: %v, level %d", err, p.level)
+	}
+	if err := b.Off(); err != nil || p.level != dimBrightness {
+		t.Fatalf("off from dim changed it: %v %d", err, p.level)
+	}
+	if err := b.On(); err != nil || p.level != 160 {
+		t.Fatalf("on: %v, level %d", err, p.level)
+	}
+	// Already as dim as it goes: nothing to put back.
+	p.level = 8
+	if err := b.Dim(16); err != nil || b.off {
+		t.Fatalf("dim at the bottom: %v off=%v", err, b.off)
+	}
+}
+
+func TestBacklightDimToALevel(t *testing.T) {
+	p := &panel{level: 160}
+	b := &Backlight{dev: p}
+	if err := b.Dim(16); err != nil || p.level != 16 {
+		t.Fatalf("dim to 16: %v, level %d", err, p.level)
+	}
+	if err := b.On(); err != nil || p.level != 160 {
+		t.Fatalf("on: %v %d", err, p.level)
+	}
+}

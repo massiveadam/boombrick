@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/ujjwal313/boombrick/internal/audio"
@@ -98,9 +99,74 @@ func deviceOutput(log *slog.Logger) audio.Output {
 	if firmware != platform.RGSP {
 		return alsa.New()
 	}
-	return route.New(func() route.State { return platform.AudioState("/") },
-		func(name string) audio.Output { return alsa.NewNamed(name) },
+	state := func() route.State { return platform.AudioState("/") }
+	if outputs != nil {
+		state = outputs.State // with the quick menu's choice
+	}
+	r := route.New(state,
+		func(name string) audio.Output {
+			// plorpOS defines each headset as a bare BlueALSA PCM, which plays
+			// only at the rate the link was set up with (44.1 or 48 kHz, as the
+			// headset chose); through plug, ALSA converts to it.
+			if strings.HasPrefix(name, "bt_") {
+				// 300 ms queued, not the codec's 100: the link's rate
+				// conversion and its timing need the slack, and a headset
+				// lags far more than that anyway.
+				return alsa.NewBuffered("plug:"+name, 300*time.Millisecond)
+			}
+			return alsa.NewNamed(name)
+		},
 		func(msg string, args ...any) { log.Info(msg, args...) })
+	r.OnSink = func(s route.Sink) {
+		if f := sinkFollower.Load(); f != nil {
+			(*f)(s)
+		}
+	}
+	router = r
+	return r
+}
+
+// router is the RG SP's router, nil elsewhere; sinkFollower, once set, hears
+// each output it moves to (followOutputs).
+var (
+	router       *route.Router
+	sinkFollower atomic.Pointer[func(route.Sink)]
+)
+
+// followOutputs gives each output its own EQ on the RG SP: as the router
+// moves, eq switches to the profile kept for where the sound now goes. A
+// Bluetooth headset is known by its BlueALSA device, which names its address.
+func followOutputs(eq *peq.Manager, log *slog.Logger) {
+	if router == nil {
+		return
+	}
+	f := func(s route.Sink) {
+		key := outputKey(s)
+		if key == eq.Output() {
+			return
+		}
+		if err := eq.SetOutput(key); err != nil {
+			log.Warn("equaliser for the output", "output", key, "err", err)
+		}
+		log.Info("equaliser for the output", "output", key, "profile", eq.Name(), "bypassed", eq.Bypassed())
+	}
+	sinkFollower.Store(&f)
+	if s := router.Sink(); s.Name != "" {
+		f(s) // the router opened before the EQ did
+	}
+}
+
+// outputKey is the name an output's EQ is kept under.
+func outputKey(s route.Sink) string {
+	switch s.Kind {
+	case route.Bluetooth:
+		return s.Name // bt_6C_12_70_4B_F7_C9
+	case route.USB:
+		return "usb-" + strings.NewReplacer("plughw:CARD=", "", ",DEV=0", "").Replace(s.Name)
+	case route.Wired:
+		return "wired"
+	}
+	return "speaker"
 }
 
 // captures are the recordings made, finished as the program ends.

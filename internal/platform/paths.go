@@ -7,6 +7,7 @@ package platform
 import (
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/ujjwal313/boombrick/internal/platform/input"
 )
@@ -188,6 +189,21 @@ func (p Profile) Device() string {
 	}
 	return "TrimUI Brick"
 }
+
+// DimAfter is how long music plays untouched before the screen dims: 30
+// seconds on the RG SP, whose lid stays open in a pocket; 0, never, elsewhere.
+func (p Profile) DimAfter() time.Duration {
+	if p.Firmware == RGSP {
+		return 30 * time.Second
+	}
+	return 0
+}
+
+// PlayOnWhenClosed reports whether a signal to quit hands the music to the
+// background player when it plays, rather than stopping it: plorpOS's Quit
+// over a port is the RG SP's only way out, as Menu is its menu there. Not on
+// the Brick or Knulli, whose signal may come as the device powers off.
+func (p Profile) PlayOnWhenClosed() bool { return p.Firmware == RGSP }
 
 // QuitChord reports whether Start pressed with Menu held quits, as Knulli's
 // ports quit with Function, the Brick's Menu, and Start.

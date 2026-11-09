@@ -238,11 +238,16 @@ Roms/Ports/boombrick/data, logs      made on first run
 - **Tailscale** (optional `dist/Tailscale-RGSP.zip`): Tailscale 1.104.5's
   static arm64 build, checked against its published SHA-256, toggled from
   the Ports shelf. Userspace mode (no TUN or iptables needed), host name
-  `rgsp`, Tailscale SSH on, log uploads off, socket in `/tmp` (the FAT card
-  can't hold one). First login from `tailscale/authkey.txt`, deleted once
-  used. Away from home `rgsp-sync` reaches sanchez through its local proxy
-  (`ts.sh env`). Tested on sanchez with the x86 build, never logged in:
-  starts, sees it needs a login, says so, stops.
+  `rgsp`, log uploads off, socket in `/tmp` (the FAT card can't hold one).
+  First login from `tailscale/authkey.txt`, deleted once used. Away from
+  home `rgsp-sync` reaches sanchez through its local proxy (`ts.sh env`).
+  **On the device (2026-11-08):** logs in and joins the tailnet. Tailscale
+  SSH is off: it needs `getent`, which BaseOS's BusyBox lacks, and hangs.
+  Instead SSH to the tailnet address reaches BaseOS's own dropbear
+  (userspace mode passes inbound connections to local ports). BaseOS's
+  clock sync is off on a fresh install (`/data/ntp-enabled` must hold
+  `yes`); without it the clock starts in 2022 and the login fails on
+  Tailscale's certificate.
 
 ### Cards and the library
 
@@ -374,6 +379,49 @@ kernel are unknown).
 - **Later, maybe:** t3code-threads (a CLI for T3 Code threads over its
   WebSocket API) as a structured alternative to typing into a TUI; it
   imports T3's internal contracts, so it may break with T3 updates.
+
+## Phase 7 — on the device (2026-11-08)
+
+The RG SP runs BaseOS 1.4.0 on a 16 GB TF1 and plorpOS v1.8 on the 256 GB
+TF2, **patched**: the patch is plorpOS's branch `rgsp-music-signal` in
+`/srv/media/disk2/rgsp/plorpOS` on sanchez (`make PLATFORM=h700
+build/h700/tortos.elf`; the stock launcher is kept on the card as
+`TortOS/tortos.elf.v1.8-stock`). This fork's no-changes-to-plorpOS rule gave
+way where Boombrick could not otherwise behave: sleep, the lid and the
+headset's buttons are plorpOS's alone.
+
+- **Music player signal** (`/tmp/plorpos-music-playing`: Boombrick's pid and
+  `playing` or `paused`, `platform.Announce`). plorpOS's sleep treats it as
+  Muse playing (screen off, sound on, suspend only once stopped); its
+  volume-key chord and a headset's own buttons, ear detection included, go
+  to Boombrick (`/tmp/plorpos-music-command` and SIGUSR1:
+  toggle/pause/next/prev); a Menu tap is Boombrick's own while it is in
+  front (its quick menu), Menu held still plorpOS's switcher. Lid open wakes
+  the screen from the music's dark.
+- **Main shelf:** a Boombrick card beside Muse (`tools/genboombrickcard.py`),
+  independent of the Ports card, which can be hidden.
+- **Boot jobs:** plorpOS runs `System/autostart.d/*.sh`: Tailscale
+  (`ssh rgsp` from anywhere, dropbear over the tailnet; Tailscale SSH needs
+  `getent`, which BaseOS lacks) and the music sync (home Wi-Fi and charging,
+  every 30 min, `Roms/Ports/boombrick/sync.conf`). sanchez serves the Opus copy
+  read-only (container `rgsp-music`, port 8099) and refreshes it nightly
+  (`rgsp-music-refresh.timer`).
+- **Boombrick:** quitting while music plays hands it to the background player
+  (plorpOS's Quit signals the launcher too: a second signal no longer cuts the
+  hand-over short); quick-menu **Output** (Auto, this device, Bluetooth, USB);
+  an **EQ per output** (`data/eq/outputs/`, each headset by its address);
+  **Last.fm** (`internal/scrobble`, `data/lastfm.json`); **dimming** after
+  Settings' Dim after, to Dim level (down to 1, or Black); a damaged database
+  is set aside and a new one made.
+- **Bluetooth:** plorpOS's headset PCM is bare BlueALSA, fixed at the rate
+  the link chose (44.1 or 48 kHz): opened through `plug:`. 300 ms queued for
+  a headset, and a write that waits 2 s reopens the device: BlueALSA could
+  stop after an underrun until closed.
+- **Found on the device:** BaseOS's clock sync is off on a fresh install
+  (`/data/ntp-enabled`), which broke TLS until set; its SSH password defaults
+  to `root` (now a random one in TF1's `baseos.conf`; key login only in
+  practice); a hard power cut while Boombrick wrote left the database short
+  of its own pages on exFAT.
 
 ## What remains unverified
 
