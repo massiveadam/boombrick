@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -76,6 +78,28 @@ func main() {
 		fmt.Fprintln(os.Stderr, "boombrick:", err)
 		os.Exit(1)
 	}
+	if reload.Load() {
+		// SIGUSR2: start again as the program now on disk, in this process,
+		// so the launcher waiting on it sees nothing change.
+		exe := selfPath()
+		err := syscall.Exec(exe, os.Args, os.Environ())
+		fmt.Fprintln(os.Stderr, "boombrick: reload:", err)
+		os.Exit(1)
+	}
+}
+
+// reload is set by SIGUSR2: once the app has quit, Boombrick starts again as
+// the program on disk - a new build copied over it - without the launcher.
+var reload atomic.Bool
+
+// selfPath is the program's file. Replaced by a new build, the running one's
+// is reported with " (deleted)" after it; the path is the new build's.
+func selfPath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return os.Args[0]
+	}
+	return strings.TrimSuffix(exe, " (deleted)")
 }
 
 func run(started time.Time) error {
@@ -546,6 +570,21 @@ func run(started time.Time) error {
 			break
 		}
 		os.Exit(1)
+	}()
+	// SIGUSR2 reloads: the app quits as it does at a quit - the music, if it
+	// plays, handed to the background player, which the new start takes it
+	// back from - and main starts the program on disk in its place.
+	usr2 := make(chan os.Signal, 1)
+	signal.Notify(usr2, syscall.SIGUSR2)
+	go func() {
+		<-usr2
+		log.Info("reloading")
+		reload.Store(true)
+		if p.State().Playing {
+			a.PlayOnAndQuit()
+		} else {
+			a.Quit()
+		}
 	}()
 	// plorpOS, told the music plays, keeps it playing as the screen goes off.
 	// Listening first: an unasked-for SIGUSR1 would end this process.
