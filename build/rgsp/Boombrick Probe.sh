@@ -5,4 +5,4 @@
 HERE="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$HERE/boombrick/logs"
 "$HERE/boombrick/bin/rgsp-probe" > "$HERE/boombrick/logs/probe.txt" 2>&1
-"$HERE/boombrick/boombrick" -version >> "$HERE/boombrick/logs/probe.txt" 2>&1
+LD_LIBRARY_PATH="$HERE/boombrick/lib:$LD_LIBRARY_PATH" "$HERE/boombrick/boombrick" -version >> "$HERE/boombrick/logs/probe.txt" 2>&1

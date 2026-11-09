@@ -1,7 +1,9 @@
 #!/bin/sh
 # Tailscale on the RG SP, in userspace mode: BaseOS may have no TUN device,
 # and this mode needs none, no iptables, and nothing installed. The device
-# joins your tailnet as "rgsp": you can reach it with Tailscale SSH, and
+# joins your tailnet as "rgsp": SSH to its tailnet address reaches BaseOS's
+# own dropbear (Tailscale SSH stays off: it needs getent, which BaseOS
+# lacks), and
 # programs on it reach the tailnet through a local proxy (rgsp-sync honours
 # HTTP_PROXY; see `ts.sh env`).
 #
@@ -51,7 +53,7 @@ start() {
 	while [ $i -lt 25 ] && { [ -z "$state" ] || [ "$state" = NoState ]; }; do sleep 0.2; i=$((i + 1)); state=$(backend); done
 	if [ "$state" = NeedsLogin ] || [ "$state" = Stopped ]; then
 		if [ -s "$DIR/authkey.txt" ]; then
-			if ts up --ssh --hostname="$HOSTNAME_TS" --accept-dns=false --timeout=60s \
+			if ts up --ssh=false --hostname="$HOSTNAME_TS" --accept-dns=false --timeout=60s \
 				--auth-key="file:$DIR/authkey.txt" >> "$LOG" 2>&1; then
 				rm -f "$DIR/authkey.txt" # used: the login is in state/ now
 			else
@@ -62,7 +64,7 @@ start() {
 			stop
 			return 1
 		else
-			ts up --ssh --hostname="$HOSTNAME_TS" --accept-dns=false --timeout=60s >> "$LOG" 2>&1
+			ts up --ssh=false --hostname="$HOSTNAME_TS" --accept-dns=false --timeout=60s >> "$LOG" 2>&1
 		fi
 	fi
 	say "on: $(ts ip -4 2>/dev/null | head -1) as $HOSTNAME_TS"

@@ -56,9 +56,15 @@ cp dist/rgsp/boombrick build/rgsp/launch LICENSE NOTICE assets/fonts/OFL-*.txt "
 cp dist/rgsp/lib/* "$APP/lib/"
 cp build/rgsp/sdl2-h700.patch "$APP/lib/"
 cp build/rgsp/Boombrick.sh "build/rgsp/Boombrick Probe.sh" "$PORT/"
+cp dist/rgsp/rgsp-sync dist/rgsp/rgsp-probe "$APP/bin/"
+# The music sync, started at boot by the patched plorpOS (System/autostart.d);
+# it does nothing until Roms/Ports/boombrick/sync.conf says where the server is.
+mkdir -p dist/rgsp-port/System/autostart.d
+cp build/rgsp/boombrick-sync.sh dist/rgsp-port/System/autostart.d/boombrick-sync.sh
+chmod +x "$APP/boombrick" "$APP/launch" "$APP/bin/rgsp-sync" "$APP/bin/rgsp-probe" "$PORT/Boombrick.sh" "$PORT/Boombrick Probe.sh"
 scripts/licenses.sh dist/rgsp/boombrick > "$APP/THIRD-PARTY.txt"
 rm -f dist/Boombrick-RGSP.zip
-docker run --rm --user "$(id -u):$(id -g)" -v "$ROOT/dist:/d" -w /d/rgsp-port "$IMAGE" zip -9qr ../Boombrick-RGSP.zip Roms
+docker run --rm --user "$(id -u):$(id -g)" -v "$ROOT/dist:/d" -w /d/rgsp-port "$IMAGE" zip -9qr ../Boombrick-RGSP.zip Roms System
 echo "dist/Boombrick-RGSP.zip"
 
 # Tailscale, optional, in a zip of its own: Roms/Ports/Tailscale.sh and
@@ -69,7 +75,10 @@ mkdir -p "$TS/tailscale"
 TSBIN=$(build/rgsp/tailscale/fetch.sh arm64)
 cp "$TSBIN/tailscale" "$TSBIN/tailscaled" "$TSBIN/LICENSE" build/rgsp/tailscale/ts.sh build/rgsp/tailscale/README.txt "$TS/tailscale/"
 cp build/rgsp/tailscale/Tailscale.sh "$TS/"
+# Started at boot by the patched plorpOS (System/autostart.d).
+mkdir -p dist/rgsp-tailscale/System/autostart.d
+cp build/rgsp/tailscale/autostart.sh dist/rgsp-tailscale/System/autostart.d/tailscale.sh
 chmod +x "$TS/Tailscale.sh" "$TS/tailscale/ts.sh" "$TS/tailscale/tailscale" "$TS/tailscale/tailscaled"
 rm -f dist/Tailscale-RGSP.zip
-docker run --rm --user "$(id -u):$(id -g)" -v "$ROOT/dist:/d" -w /d/rgsp-tailscale "$IMAGE" zip -9qr ../Tailscale-RGSP.zip Roms
+docker run --rm --user "$(id -u):$(id -g)" -v "$ROOT/dist:/d" -w /d/rgsp-tailscale "$IMAGE" zip -9qr ../Tailscale-RGSP.zip Roms System
 echo "dist/Tailscale-RGSP.zip"
