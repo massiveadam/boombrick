@@ -3,6 +3,7 @@
 package fixture
 
 import (
+	"github.com/ujjwal313/boombrick/internal/library"
 	"github.com/ujjwal313/boombrick/internal/media"
 	"github.com/ujjwal313/boombrick/internal/ui"
 	"github.com/ujjwal313/boombrick/internal/ui/widgets"
@@ -24,6 +25,9 @@ type Item struct {
 	Play            func()  // starts the item's music; nil for sample content
 	Queue           func()  // adds the item's music to the queue; nil for sample content
 	Import          func()  // X: imports a Spotify playlist; nil for none
+	// Album is the album the item plays, for Home to open its page with A
+	// (X then plays it); nil for others.
+	Album *library.Album
 }
 
 // Row is a titled row on Home.

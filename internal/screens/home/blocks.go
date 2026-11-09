@@ -231,7 +231,7 @@ func albumsRow(title, meta string, albums []*library.Album, play, queue func(*li
 	}
 	items := make([]fixture.Item, len(albums))
 	for i, a := range albums {
-		items[i] = fixture.Item{Title: a.Title, Subtitle: a.Artist, Art: screens.AlbumArt(a), Source: source(a),
+		items[i] = fixture.Item{Title: a.Title, Subtitle: a.Artist, Art: screens.AlbumArt(a), Source: source(a), Album: a,
 			Play: func() { play(a) }}
 		if queue != nil {
 			items[i].Queue = func() { queue(a) }

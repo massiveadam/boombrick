@@ -424,6 +424,9 @@ func run(started time.Time) error {
 		default:
 		}
 	}
+	if prof.Firmware == platform.RGSP {
+		go rescanAfterSync(ctx, filepath.Join(paths.Music, "Library", ".rgsp-sync", "state.json"), time.Minute, rescan)
+	}
 	// Save the queue every 5 s while music plays. The app reloads Continue
 	// listening when a save moves to another track or playback stops.
 	savedTrack := make(chan struct{}, 1)

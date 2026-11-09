@@ -407,6 +407,7 @@ func New(opts Options) (*App, error) {
 		a.reader.Go(func() { watchStatus(opts.Status, statusEvery, a.statuses, a.wake, a.lit, a.stop) })
 	}
 	a.home.SetEmpty(opts.MusicDir, func() { a.rescan(); a.Toast(screens.Scanning) })
+	a.home.SetOpen(func(al *library.Album) { a.Push(browse.NewAlbumPage(a, opts.Player, al)) })
 	a.library = browse.New(a, opts.Player, opts.MusicDir, a.rescan)
 	a.loads = newLoader(opts.Load, opts.Progress, a.wake)
 	a.loads.history = opts.History

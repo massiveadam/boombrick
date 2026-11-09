@@ -49,6 +49,7 @@ type Home struct {
 	reading  bool         // the first scan is running with nothing indexed yet
 	musicDir string       // shown on the empty state
 	rescan   func()
+	open     func(*library.Album)         // A on an album: its page; nil plays it
 	state    widgets.Wrapped              // the empty or reading state's description, wrapped
 	hintBars map[itemHints][]widgets.Hint // made as each is first shown
 }
@@ -70,6 +71,14 @@ func New(rows []fixture.Row) *Home {
 
 // SetEmpty sets what the empty state shows and what Y does there.
 func (h *Home) SetEmpty(musicDir string, rescan func()) { h.musicDir, h.rescan = musicDir, rescan }
+
+// SetOpen has A open an album's page with open, and X play it.
+func (h *Home) SetOpen(open func(*library.Album)) { h.open = open }
+
+// opens reports whether A opens the item's album page rather than playing it.
+func (h *Home) opens(it *fixture.Item) bool {
+	return h.open != nil && it.Album != nil && it.Play != nil
+}
 
 // SetReading says the first scan is running and nothing is indexed yet;
 // until SetRows the screen says the music is being read.
@@ -157,7 +166,7 @@ func ContinueRow(progress []resume.Progress, ix *library.Index, play func(a *lib
 		shown = append(shown, a)
 		frame := pr.Frame
 		// The badge is the continued track's: an album may mix downloads with files of its own.
-		it := fixture.Item{Title: a.Title, Subtitle: a.Artist, Art: screens.AlbumArt(a),
+		it := fixture.Item{Title: a.Title, Subtitle: a.Artist, Art: screens.AlbumArt(a), Album: a,
 			Source: screens.SourceOf(a.Tracks[track].Path), Progress: pr.Fraction, Play: func() { play(a, track, frame) }}
 		if queue != nil {
 			it.Queue = func() { queue(a) }
@@ -184,7 +193,7 @@ func AlbumRow(albums []*library.Album, play, queue func(*library.Album)) (fixtur
 	items := make([]fixture.Item, min(len(albums), maxRecent))
 	for i := range items {
 		a := albums[i]
-		items[i] = fixture.Item{Title: a.Title, Subtitle: a.Artist, Art: screens.AlbumArt(a), Source: source(a),
+		items[i] = fixture.Item{Title: a.Title, Subtitle: a.Artist, Art: screens.AlbumArt(a), Source: source(a), Album: a,
 			Play: func() { play(a) }}
 		if queue != nil {
 			items[i].Queue = func() { queue(a) }
@@ -343,10 +352,18 @@ func (h *Home) Handle(ev input.Event, now time.Time) bool {
 		it := h.rows[h.row].Items[h.col]
 		act := it.Play
 		switch ev.Button {
+		case input.A:
+			if h.opens(&it) {
+				al := it.Album
+				act = func() { h.open(al) }
+			}
 		case input.Y:
 			act = it.Queue
 		case input.X:
 			act = it.Import
+			if h.opens(&it) {
+				act = it.Play
+			}
 		}
 		if act != nil && ev.Kind == input.Press {
 			act()
@@ -502,7 +519,7 @@ var (
 
 // itemHints is what a playable item's hint bar depends on: whether A opens it,
 // as a Spotify playlist's page, and whether X imports it and Y queues it.
-type itemHints struct{ open, imp, queue bool }
+type itemHints struct{ open, imp, queue, album bool }
 
 func (h *Home) hints() []widgets.Hint {
 	if len(h.rows) == 0 {
@@ -519,13 +536,16 @@ func (h *Home) hints() []widgets.Hint {
 		}
 		return sampleHints
 	}
-	k := itemHints{open: r.Spotify, imp: it.Import != nil, queue: it.Queue != nil}
+	k := itemHints{open: r.Spotify, imp: it.Import != nil, queue: it.Queue != nil, album: h.opens(it)}
 	if hints, ok := h.hintBars[k]; ok {
 		return hints
 	}
 	hints := []widgets.Hint{{Key: "A", Label: "Play"}}
 	if k.open {
 		hints[0].Label = "Open"
+	}
+	if k.album {
+		hints = []widgets.Hint{{Key: "A", Label: "Open"}, {Key: "X", Label: "Play"}}
 	}
 	if k.imp {
 		hints = append(hints, widgets.Hint{Key: "X", Label: "Import"})

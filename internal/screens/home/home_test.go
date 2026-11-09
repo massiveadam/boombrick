@@ -600,3 +600,23 @@ func TestSpotifyRow(t *testing.T) {
 		t.Fatalf("X imported %v", imported)
 	}
 }
+
+func TestAOpensAnAlbumAndXPlaysIt(t *testing.T) {
+	al := &library.Album{Title: "Kaputt", Artist: "Destroyer", Tracks: []library.Track{{Title: "Chinatown"}}}
+	var played, queued, opened *library.Album
+	row, _ := AlbumRow([]*library.Album{al}, func(a *library.Album) { played = a }, func(a *library.Album) { queued = a })
+	h := New([]fixture.Row{row})
+	h.SetOpen(func(a *library.Album) { opened = a })
+	if hs := h.hints(); hs[0].Label != "Open" || hs[1].Key != "X" || hs[1].Label != "Play" {
+		t.Fatalf("hints %+v", hs)
+	}
+	h.Handle(press(input.A), time.Time{})
+	if opened != al || played != nil {
+		t.Fatalf("A: opened %v, played %v", opened, played)
+	}
+	h.Handle(press(input.X), time.Time{})
+	h.Handle(press(input.Y), time.Time{})
+	if played != al || queued != al {
+		t.Fatalf("X played %v, Y queued %v", played, queued)
+	}
+}
