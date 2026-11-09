@@ -70,7 +70,8 @@ type Menu struct {
 	sleep   player.Sleep // the sleep timer as the sleep row last showed it
 	at      time.Time    // and when, for its time left
 	hints   [rowCount][]widgets.Hint
-	visible []int // the rows shown, as they were when the menu opened
+	visible []int      // the rows shown, as they were when the menu opened
+	scroll  anim.Value // how far the rows are scrolled, when they don't all fit
 }
 
 // New returns the menu, closed.
@@ -114,6 +115,7 @@ func (m *Menu) Open(now time.Time) {
 		m.k[i].Set(0)
 	}
 	m.k[rowSleep].Set(1)
+	m.scroll.Set(0)
 	m.shown.To(1, now, anim.Dialog, anim.EaseOutCubic)
 }
 
@@ -207,7 +209,7 @@ func (m *Menu) do(now time.Time) {
 
 // Animating reports whether the menu or its focus is moving.
 func (m *Menu) Animating(now time.Time) bool {
-	if !m.shown.Done(now) {
+	if !m.shown.Done(now) || !m.scroll.Done(now) {
 		return true
 	}
 	for i := range m.k {
@@ -235,17 +237,33 @@ func (m *Menu) Draw(u *ui.Context) {
 	}
 	m.refresh(u.Now)
 	m.refreshOutput()
-	h := padTop + u.LineHeight(title) + 20 + float32(len(m.visible)*widgets.SettingHeight) + padTop
-	p := widgets.BeginPanel(u, h, shown)
+	head := padTop + u.LineHeight(title) + 20
+	rows := float32(len(m.visible) * widgets.SettingHeight)
+	// On a short screen (the RG SP's) the rows don't all fit: the panel stays
+	// clear of the hint bar above and below, and its rows scroll to keep the
+	// focused one in view.
+	maxH := float32(theme.ScreenH - 2*(widgets.HintsHeight+8))
+	view := min(rows, maxH-head-padTop)
+	p := widgets.BeginPanel(u, head+view+padTop, shown)
 	box := p.Box
 	y := box.Y + padTop
 	u.Text("Quick menu", title, box.X+40, y, theme.Paper)
 	y += u.LineHeight(title) + 20
+	if view < rows {
+		at := float32(slices.Index(m.visible, m.focus) * widgets.SettingHeight)
+		to := max(m.scroll.Target(), float64(at+widgets.SettingHeight-view))
+		m.scroll.To(min(to, float64(at)), u.Now, anim.Focus, anim.EaseOutCubic)
+	} else {
+		m.scroll.Set(0)
+	}
+	u.PushClip(gfx.Rect{X: box.X, Y: y, W: box.W, H: view})
+	y -= float32(m.scroll.At(u.Now))
 	for n, i := range m.visible {
 		row := gfx.Rect{X: box.X + padSide, Y: y, W: box.W - 2*padSide, H: widgets.SettingHeight}
 		widgets.DrawSetting(u, m.rows[i], row, float32(m.k[i].At(u.Now)), n == len(m.visible)-1)
 		y += widgets.SettingHeight
 	}
+	u.PopClip()
 	p.End(u)
 	if m.open {
 		// The menu's hints replace the screen's, which would show through.
