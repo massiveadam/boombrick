@@ -1,6 +1,7 @@
 package musicsync
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // library makes a server library under root: path -> contents.
@@ -370,5 +372,33 @@ func TestOnCardReplacesWhatExFATRefuses(t *testing.T) {
 	}
 	if got := onCard("/c", "Björk/Jóga – live.opus"); got != "/c/Björk/Jóga – live.opus" {
 		t.Fatalf("kept: %q", got)
+	}
+}
+
+func TestThrottled(t *testing.T) {
+	src := bytes.NewReader(make([]byte, 40<<10))
+	r := &throttled{ctx: context.Background(), r: src, limit: func() int64 { return 200 << 10 }}
+	start := time.Now()
+	n, err := io.Copy(io.Discard, r)
+	if err != nil || n != 40<<10 {
+		t.Fatalf("read %d, %v", n, err)
+	}
+	if took := time.Since(start); took < 150*time.Millisecond {
+		t.Fatalf("40 KB at 200 KB/s took %v", took)
+	}
+}
+
+func TestWhilePlaying(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "playing")
+	if WhilePlaying(path, 100)() != 0 {
+		t.Fatal("limited with no file")
+	}
+	os.WriteFile(path, []byte("123 playing\n"), 0o644)
+	if WhilePlaying(path, 100)() != 100 {
+		t.Fatal("not limited while playing")
+	}
+	os.WriteFile(path, []byte("123 paused\n"), 0o644)
+	if WhilePlaying(path, 100)() != 0 {
+		t.Fatal("limited while paused")
 	}
 }

@@ -148,7 +148,11 @@ type Options struct {
 	Delete bool
 	// Reserve is space to leave free on the card, in bytes.
 	Reserve int64
-	Log     *slog.Logger
+	// Limit, when set, is the most bytes a second to download, asked as it
+	// goes: 0 for no limit. The RG SP's Wi-Fi and Bluetooth share a radio,
+	// and a sync at full speed makes Bluetooth audio stutter.
+	Limit func() int64
+	Log   *slog.Logger
 }
 
 // Plan is what a pull does.
@@ -224,7 +228,7 @@ func Pull(ctx context.Context, src Source, dest string, opts Options) (Result, e
 		if ctx.Err() != nil {
 			return stopped(ctx.Err())
 		}
-		if err := fetch(ctx, src, dest, e); err != nil {
+		if err := fetch(ctx, src, dest, e, opts.Limit); err != nil {
 			log.Warn("sync file", "path", e.Path, "err", err)
 			res.Failed[e.Path] = err
 			if ctx.Err() != nil {
@@ -308,7 +312,7 @@ func partialPath(dest string, e Entry) string {
 
 // fetch downloads e, resuming its partial file, checks its hash and renames
 // it into place.
-func fetch(ctx context.Context, src Source, dest string, e Entry) error {
+func fetch(ctx context.Context, src Source, dest string, e Entry, limit func() int64) error {
 	part := partialPath(dest, e)
 	if err := os.MkdirAll(filepath.Dir(part), 0o755); err != nil {
 		return err
@@ -333,7 +337,11 @@ func fetch(ctx context.Context, src Source, dest string, e Entry) error {
 		if err != nil {
 			return err
 		}
-		_, err = io.Copy(f, io.LimitReader(r, e.Size-have))
+		var in io.Reader = io.LimitReader(r, e.Size-have)
+		if limit != nil {
+			in = &throttled{ctx: ctx, r: in, limit: limit}
+		}
+		_, err = io.Copy(f, in)
 		r.Close()
 		if err != nil {
 			f.Sync() // keep what came, for the next run
@@ -428,4 +436,32 @@ func freeSpace(dest string) (int64, bool) {
 		return 0, false
 	}
 	return int64(s.Bavail) * int64(s.Bsize), true
+}
+
+// throttled reads no faster than limit allows, asked again for each read.
+type throttled struct {
+	ctx   context.Context
+	r     io.Reader
+	limit func() int64
+}
+
+func (t *throttled) Read(p []byte) (int, error) {
+	n := t.limit()
+	if n <= 0 {
+		return t.r.Read(p)
+	}
+	chunk := max(n/10, 4096) // about a tenth of a second's worth at a time
+	if int64(len(p)) > chunk {
+		p = p[:chunk]
+	}
+	start := time.Now()
+	got, err := t.r.Read(p)
+	if wait := time.Duration(float64(got)/float64(n)*float64(time.Second)) - time.Since(start); wait > 0 {
+		select {
+		case <-time.After(wait):
+		case <-t.ctx.Done():
+			return got, t.ctx.Err()
+		}
+	}
+	return got, err
 }

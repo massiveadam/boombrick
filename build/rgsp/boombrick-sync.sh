@@ -13,6 +13,9 @@
 #   EVERY=1800                            seconds between tries (default 30 min)
 #   MIN_BATTERY=30                        least battery, percent, to sync off the charger
 #                                         (101: only on the charger)
+#   PLAYING_KBPS=256                      while music plays, download at most this many KB/s:
+#                                         Wi-Fi at full speed makes Bluetooth audio stutter
+#                                         (0: no limit)
 # Without that file, nothing is done.
 SD=/mnt/SDCARD
 DIR=$SD/Roms/Ports/boombrick
@@ -28,6 +31,7 @@ while :; do
 	[ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt 262144 ] && mv -f "$LOG" "$LOG.1"
 	echo "$(date '+%F %T') sync" >> "$LOG"
 	"$DIR/bin/rgsp-sync" auto -from "$SERVER/music/" -manifest "$SERVER/meta/manifest.json" \
-		-to "$SD/Music/Library" -delete -home-ssid "$HOME_SSID" -min-battery "${MIN_BATTERY:-30}" >> "$LOG" 2>&1
+		-to "$SD/Music/Library" -delete -home-ssid "$HOME_SSID" -min-battery "${MIN_BATTERY:-30}" \
+		-playing-kbps "${PLAYING_KBPS:-256}" >> "$LOG" 2>&1
 	sleep "${EVERY:-1800}"
 done

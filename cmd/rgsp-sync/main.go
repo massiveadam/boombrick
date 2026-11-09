@@ -117,6 +117,8 @@ func pull(args []string, auto bool) error {
 	reserve := fs.Int64("reserve-mb", 512, "space to leave free on the card, MB")
 	home := fs.String("home-ssid", "", "auto: comma-separated Wi-Fi networks that are home")
 	minBat := fs.Int("min-battery", 40, "auto: least battery, percent, to sync without a charger")
+	playingKB := fs.Int64("playing-kbps", 0, "while music plays (plorpOS's playing file says so), download at most this many KB/s; 0 for no limit")
+	playing := fs.String("playing-file", "/tmp/plorpos-music-playing", "the file saying music plays")
 	fs.Parse(args)
 	if *from == "" || *to == "" {
 		return errors.New("-from and -to are needed")
@@ -146,7 +148,11 @@ func pull(args []string, auto bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	start := time.Now()
-	res, err := musicsync.Pull(ctx, src, *to, musicsync.Options{DryRun: *dry, Delete: *del, Reserve: *reserve << 20, Log: log})
+	opts := musicsync.Options{DryRun: *dry, Delete: *del, Reserve: *reserve << 20, Log: log}
+	if *playingKB > 0 {
+		opts.Limit = musicsync.WhilePlaying(*playing, *playingKB<<10)
+	}
+	res, err := musicsync.Pull(ctx, src, *to, opts)
 	verb := "synced"
 	if *dry {
 		verb = "would sync"

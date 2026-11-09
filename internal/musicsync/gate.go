@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Gate decides whether an automatic sync may run now: only on a home
@@ -97,5 +98,24 @@ func BatteryFrom(sysfs string) func() (int, bool, bool) {
 			return pct, st == "Charging" || st == "Full", true
 		}
 		return 0, false, false
+	}
+}
+
+// WhilePlaying is a Limit of limit bytes a second while the file at path says
+// music plays ("<pid> playing"), and none otherwise. It looks at the file at
+// most once a second.
+func WhilePlaying(path string, limit int64) func() int64 {
+	var at time.Time
+	var playing bool
+	return func() int64 {
+		if time.Since(at) > time.Second {
+			at = time.Now()
+			b, _ := os.ReadFile(path)
+			playing = strings.Contains(string(b), "playing")
+		}
+		if playing {
+			return limit
+		}
+		return 0
 	}
 }
