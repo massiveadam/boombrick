@@ -50,6 +50,15 @@ type Encoder interface {
 	Settings() string
 }
 
+// Retagger is an Encoder that can also give an Opus file it made new tags
+// without encoding again: when a lossless track's tags change but its audio
+// doesn't (a library retagged), its copy is retagged in seconds rather than
+// encoded over hours.
+type Retagger interface {
+	// Retag writes opus, its audio as it is, to dst, with src's tags.
+	Retag(ctx context.Context, src, opus, dst string) error
+}
+
 // Options configure Run.
 type Options struct {
 	Src, Dst string // the library (read only), and the copy
@@ -78,6 +87,9 @@ type Record struct {
 	// None marks a cover looked for and not found, so it isn't looked for
 	// again until the track changes.
 	None bool `json:"none,omitempty"`
+	// Audio identifies the source's audio apart from its tags: a FLAC's
+	// STREAMINFO MD5, of its decoded samples. "" where there is none.
+	Audio string `json:"audio,omitempty"`
 }
 
 type stateFile struct {
@@ -88,6 +100,9 @@ type stateFile struct {
 // Item is one file to make.
 type Item struct {
 	Out string // path in the copy, slash-separated
+	// From, for an Encode, is a file in the copy already holding the same
+	// audio: the item is made by retagging it. It may be Out itself.
+	From string
 	Record
 }
 
@@ -95,8 +110,11 @@ type Item struct {
 type Plan struct {
 	Make   []Item
 	Remove []string // files made earlier whose source is gone or changed
-	Kept   int
-	Skip   []string // library files left out, with why
+	// Moved are files made earlier whose audio now has another place: they
+	// are retagged into it, and removed after.
+	Moved []string
+	Kept  int
+	Skip  []string // library files left out, with why
 }
 
 // Result is what a run did.
@@ -148,7 +166,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 		return Result{}, err
 	}
 	res := Result{Plan: plan, Failed: map[string]error{}}
-	log.Info("transcode plan", "make", len(plan.Make), "remove", len(plan.Remove), "kept", plan.Kept, "skipped", len(plan.Skip))
+	log.Info("transcode plan", "make", len(plan.Make), "retag", plan.Retags(), "remove", len(plan.Remove)+len(plan.Moved), "kept", plan.Kept, "skipped", len(plan.Skip))
 	if o.DryRun {
 		return res, nil
 	}
@@ -166,12 +184,16 @@ func Run(ctx context.Context, o Options) (Result, error) {
 
 	var mu sync.Mutex
 	lastSave := time.Now()
+	keep := map[string]bool{} // moved files a failed retag still needs
 	done := func(it Item, out string, err error) {
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {
 			log.Warn("transcode file", "path", it.Src, "err", err)
 			res.Failed[it.Out] = err
+			if it.From != "" {
+				keep[it.From] = true
+			}
 			return
 		}
 		if out == "" {
@@ -213,6 +235,23 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	}
 	close(work)
 	wg.Wait()
+	made := map[string]bool{}
+	for _, it := range plan.Make {
+		made[it.Out] = true
+	}
+	for _, p := range plan.Moved {
+		if keep[p] || made[p] || ctx.Err() != nil {
+			continue // still to retag from, or made anew in its place
+		}
+		full := filepath.Join(o.Dst, filepath.FromSlash(p))
+		if err := os.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
+			res.Failed[p] = err
+			continue
+		}
+		removeEmptyParents(o.Dst, filepath.Dir(full))
+		delete(st.Files, p)
+		res.Removed++
+	}
 	if err := save(o.State, st); err != nil {
 		return res, err
 	}
@@ -287,6 +326,7 @@ func makePlan(ctx context.Context, o Options, st stateFile) (Plan, error) {
 					continue
 				}
 				r.Codec = codec
+				r.Audio = audioOf(known, filepath.Join(full, name), r, codec)
 				out := rel
 				if slices.Contains(playable, codec) {
 					r.Action = Copy
@@ -328,26 +368,58 @@ func makePlan(ctx context.Context, o Options, st stateFile) (Plan, error) {
 
 	// A cover's place has no extension until it is made: the state records
 	// it with one.
+	_, canRetag := o.Encoder.(Retagger)
+	from := map[string]string{}  // by out: the made file to retag it from
+	audio := map[string]string{} // by audio: a made file holding it, whose source changed or moved
 	for out, r := range st.Files {
 		key := out
 		if r.Action == Cover {
 			key = strings.TrimSuffix(out, path.Ext(out))
 		}
-		w, ok := want[key]
-		if !ok || !same(w, r) {
-			p.Remove = append(p.Remove, out)
-			continue
-		}
-		if info, err := os.Stat(filepath.Join(o.Dst, filepath.FromSlash(out))); !r.None && (err != nil || r.OutSize > 0 && info.Size() != r.OutSize) {
+		info, err := os.Stat(filepath.Join(o.Dst, filepath.FromSlash(out)))
+		whole := err == nil && (r.OutSize == 0 || info.Size() == r.OutSize)
+		if !r.None && !whole {
 			p.Remove = append(p.Remove, out) // made before, since lost or cut short: make it again
 			continue
 		}
-		delete(want, key)
-		p.Kept++
+		w, ok := want[key]
+		if ok && same(w, r) {
+			if r.Audio != w.Audio {
+				r.Audio = w.Audio // recorded by a run from before
+				st.Files[out] = r
+			}
+			delete(want, key)
+			p.Kept++
+			continue
+		}
+		if canRetag && r.Action == Encode && r.Audio != "" {
+			if ok && w.Action == Encode && w.Set == r.Set && w.Audio == r.Audio {
+				from[key] = out // same place, new tags
+				continue
+			}
+			audio[r.Audio] = out
+		}
+		p.Remove = append(p.Remove, out)
 	}
+	moved := map[string]bool{}
 	for out, r := range want {
-		p.Make = append(p.Make, Item{Out: out, Record: r})
+		it := Item{Out: out, From: from[out], Record: r}
+		if it.From == "" && r.Action == Encode && r.Audio != "" {
+			// Not from a place something else is made in: that could be
+			// replaced while it is read.
+			if old, ok := audio[r.Audio]; ok && st.Files[old].Set == r.Set && !wanted(want, old) {
+				it.From = old // moved, or renamed
+				moved[old] = true
+			}
+		}
+		p.Make = append(p.Make, it)
 	}
+	// What is retagged from is removed only after.
+	p.Remove = slices.DeleteFunc(p.Remove, func(out string) bool { return moved[out] })
+	for out := range moved {
+		p.Moved = append(p.Moved, out)
+	}
+	sort.Strings(p.Moved)
 	sort.Slice(p.Make, func(i, j int) bool { return p.Make[i].Out < p.Make[j].Out })
 	sort.Strings(p.Remove)
 	return p, nil
@@ -375,6 +447,40 @@ func codecOf(ctx context.Context, o Options, known map[string]Record, full strin
 	return o.Encoder.Codec(ctx, full)
 }
 
+// audioOf identifies a track's audio apart from its tags, from what the state
+// recorded for the same file or from the file. Only FLAC records one.
+func audioOf(known map[string]Record, full string, r Record, codec string) string {
+	if codec != "flac" {
+		return ""
+	}
+	if old, ok := known[r.Src]; ok && old.Size == r.Size && old.MTime == r.MTime && old.Audio != "" {
+		return old.Audio
+	}
+	return flacMD5(full)
+}
+
+// flacMD5 is a FLAC file's STREAMINFO MD5 of its decoded samples, in hex: ""
+// when the file doesn't start with STREAMINFO or the encoder left it unset.
+func flacMD5(full string) string {
+	f, err := os.Open(full) // read only
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	var b [42]byte // "fLaC", the block header, STREAMINFO (MD5 last)
+	if _, err := io.ReadFull(f, b[:]); err != nil {
+		return ""
+	}
+	if string(b[:4]) != "fLaC" || b[4]&0x7f != 0 || b[5] != 0 || b[6] != 0 || b[7] != 34 {
+		return ""
+	}
+	sum := b[26:42]
+	if !slices.ContainsFunc(sum, func(c byte) bool { return c != 0 }) {
+		return ""
+	}
+	return fmt.Sprintf("%x", sum)
+}
+
 // same reports whether a and b record the same making of the same source.
 func same(a, b Record) bool {
 	return a.Src == b.Src && a.Size == b.Size && a.MTime == b.MTime && a.Action == b.Action && a.Set == b.Set
@@ -396,6 +502,13 @@ func make1(ctx context.Context, o Options, it Item) (string, error) {
 			return "", err
 		}
 	case Encode:
+		if it.From != "" {
+			opus := filepath.Join(o.Dst, filepath.FromSlash(it.From))
+			if err := o.Encoder.(Retagger).Retag(ctx, src, opus, tmp); err != nil {
+				return "", err
+			}
+			break
+		}
 		if err := o.Encoder.Encode(ctx, src, tmp); err != nil {
 			return "", err
 		}
@@ -418,6 +531,22 @@ func make1(ctx context.Context, o Options, it Item) (string, error) {
 		return "", err
 	}
 	return it.Out, nil
+}
+
+func wanted(want map[string]Record, out string) bool {
+	_, ok := want[out]
+	return ok
+}
+
+// Retags is how many of the plan's items are made by retagging.
+func (p Plan) Retags() int {
+	n := 0
+	for _, it := range p.Make {
+		if it.From != "" {
+			n++
+		}
+	}
+	return n
 }
 
 func copyFile(src, dst string) error {

@@ -74,6 +74,17 @@ func (f FFmpeg) Encode(ctx context.Context, src, dst string) error {
 	return err
 }
 
+// Retag writes opus to dst with src's tags, its audio stream copied as it is.
+// The tags are taken as Encode takes them.
+func (f FFmpeg) Retag(ctx context.Context, src, opus, dst string) error {
+	_, err := run(exec.CommandContext(ctx, f.bin(f.FFmpeg, "ffmpeg"), "-nostdin", "-hide_banner", "-v", "error", "-y",
+		"-i", opus, "-i", src,
+		// Ogg keeps the tags on the stream: src's replace them all.
+		"-map", "0:a:0", "-map_metadata", "1", "-map_metadata:s:a:0", "1:g", "-c:a", "copy",
+		"-f", "opus", dst))
+	return err
+}
+
 // Picture writes src's embedded picture to dst plus its extension.
 func (f FFmpeg) Picture(ctx context.Context, src, dst string) (string, error) {
 	out, err := run(exec.CommandContext(ctx, f.bin(f.FFprobe, "ffprobe"), "-v", "error",

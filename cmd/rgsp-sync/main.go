@@ -218,8 +218,8 @@ func transcodeCmd(args []string) error {
 	if *dry {
 		verb = "would make"
 	}
-	fmt.Printf("%s %d (encode %d, copy %d, cover %d), remove %d, %d up to date, %d skipped; made %d, removed %d, failed %d, in %v\n",
-		verb, len(res.Make), n[transcode.Encode], n[transcode.Copy], n[transcode.Cover], len(res.Remove), res.Kept, len(res.Skip),
+	fmt.Printf("%s %d (encode %d, retag %d, copy %d, cover %d), remove %d, %d up to date, %d skipped; made %d, removed %d, failed %d, in %v\n",
+		verb, len(res.Make), n[transcode.Encode]-res.Retags(), res.Retags(), n[transcode.Copy], n[transcode.Cover], len(res.Remove)+len(res.Moved), res.Kept, len(res.Skip),
 		res.Made, res.Removed, len(res.Failed), time.Since(start).Round(time.Second))
 	for _, s := range res.Skip {
 		fmt.Println("  skipped", s)

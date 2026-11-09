@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -308,5 +309,103 @@ func TestShortFileRemade(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(dst, "A/One/01 Song.opus")); string(b) != "opus:flac one" {
 		t.Fatalf("%q", b)
+	}
+}
+
+// flac is a FLAC file's start with audio's MD5 in STREAMINFO, then tags.
+func flac(audio byte, tags string) string {
+	b := []byte("fLaC")
+	b = append(b, 0x80, 0, 0, 34) // last block: STREAMINFO, 34 bytes
+	si := make([]byte, 34)
+	for i := 18; i < 34; i++ {
+		si[i] = audio
+	}
+	return string(append(append(b, si...), tags...))
+}
+
+// retagger retags by keeping the made file's audio and noting the source.
+type retagger struct {
+	fake
+	retagged []string
+}
+
+func (r *retagger) Retag(_ context.Context, src, opus, dst string) error {
+	b, err := os.ReadFile(opus)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.retagged = append(r.retagged, filepath.Base(src))
+	r.mu.Unlock()
+	return os.WriteFile(dst, append(b, []byte("+tags")...), 0o644)
+}
+
+func TestTagChangeRetagsAndMoveFollows(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	write(t, src, "A/One/01 Song.flac", flac(1, "genre=rock"))
+	write(t, src, "A/One/02 Song.flac", flac(2, "genre=rock"))
+	write(t, src, "A/One/03 Song.flac", flac(3, "genre=rock"))
+	enc := &retagger{}
+	if _, err := Run(context.Background(), Options{Src: src, Dst: dst, Encoder: enc}); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(time.Hour)
+	// 01: new tags. 02: new tags and a new name. 03: new audio.
+	write(t, src, "A/One/01 Song.flac", flac(1, "genre=indie rock"))
+	os.Remove(filepath.Join(src, "A/One/02 Song.flac"))
+	write(t, src, "A/One/02 Renamed.flac", flac(2, "genre=indie rock"))
+	write(t, src, "A/One/03 Song.flac", flac(9, "genre=rock"))
+	for _, f := range []string{"01 Song.flac", "02 Renamed.flac", "03 Song.flac"} {
+		os.Chtimes(filepath.Join(src, "A/One", f), later, later)
+	}
+	enc.encoded = nil
+	res, err := Run(context.Background(), Options{Src: src, Dst: dst, Encoder: enc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(enc.retagged)
+	if strings.Join(enc.retagged, ",") != "01 Song.flac,02 Renamed.flac" || strings.Join(enc.encoded, ",") != "03 Song.flac" {
+		t.Fatalf("retagged %v, encoded %v", enc.retagged, enc.encoded)
+	}
+	if got := strings.Join(files(t, dst), ","); got != ".transcode-state.json,A/One/01 Song.opus,A/One/02 Renamed.opus,A/One/03 Song.opus" {
+		t.Fatalf("copy holds %s", got)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dst, "A/One/02 Renamed.opus")); !strings.HasPrefix(string(b), "opus:"+flac(2, "genre=rock")) || !strings.HasSuffix(string(b), "+tags") {
+		t.Fatalf("moved track not retagged from its old copy: %q", b)
+	}
+	if res.Retags() != 2 {
+		t.Fatalf("plan retags %d", res.Retags())
+	}
+	// And all settled: nothing more to do.
+	enc.encoded, enc.retagged = nil, nil
+	res, err = Run(context.Background(), Options{Src: src, Dst: dst, Encoder: enc})
+	if err != nil || len(res.Make) != 0 || len(res.Remove) != 0 {
+		t.Fatalf("second run: %v, make %d, remove %d", err, len(res.Make), len(res.Remove))
+	}
+}
+
+func TestOlderStateLearnsAudio(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	write(t, src, "A/01 Song.flac", flac(1, "genre=rock"))
+	enc := &retagger{}
+	if _, err := Run(context.Background(), Options{Src: src, Dst: dst, Encoder: enc}); err != nil {
+		t.Fatal(err)
+	}
+	// As a run from before audio was recorded left it.
+	state := filepath.Join(dst, ".transcode-state.json")
+	b, _ := os.ReadFile(state)
+	os.WriteFile(state, []byte(regexp.MustCompile(`,"audio":"[0-9a-f]+"`).ReplaceAllString(string(b), "")), 0o644)
+	if _, err := Run(context.Background(), Options{Src: src, Dst: dst, Encoder: enc}); err != nil {
+		t.Fatal(err)
+	}
+	write(t, src, "A/01 Song.flac", flac(1, "genre=indie"))
+	later := time.Now().Add(time.Hour)
+	os.Chtimes(filepath.Join(src, "A/01 Song.flac"), later, later)
+	enc.encoded = nil
+	if _, err := Run(context.Background(), Options{Src: src, Dst: dst, Encoder: enc}); err != nil {
+		t.Fatal(err)
+	}
+	if len(enc.encoded) != 0 || len(enc.retagged) != 1 {
+		t.Fatalf("encoded %v, retagged %v", enc.encoded, enc.retagged)
 	}
 }
