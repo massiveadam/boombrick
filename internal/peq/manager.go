@@ -18,6 +18,7 @@ const (
 	currentFile = "current.txt" // the profile playing, as Equalizer APO text
 	stateFile   = "state.json"  // bypass and the preset it came from
 	presetDir   = "presets"     // saved presets, one APO file each
+	outputDir   = "outputs"     // each output's own profile: <key>.txt, and <key>.json its state
 )
 
 // saveAfter is how long after the last change the current profile is written:
@@ -39,6 +40,9 @@ func Default() Profile {
 type state struct {
 	Bypass bool   `json:"bypass"`
 	Preset string `json:"preset,omitempty"`
+	// Output is the output the profile playing is kept for (SetOutput); ""
+	// before any was named.
+	Output string `json:"output,omitempty"`
 }
 
 // Manager keeps the EQ: the profile playing, whether it is bypassed, and the
@@ -373,4 +377,84 @@ func writeAtomic(path string, b []byte) error {
 		os.Remove(name)
 	}
 	return err
+}
+
+// SetOutput makes the profile playing the one kept for the output key - a
+// Bluetooth headset, a DAC, the speaker - so each has its own EQ. The one
+// playing is kept for the output it was on, and key's comes in: the profile it
+// had, or, new, a flat one. The first output named takes the profile already
+// playing as its own. Each change is saved as before, to the profile playing;
+// it is kept for its output at the next switch. A key that can't be a file
+// name is ignored.
+func (m *Manager) SetOutput(key string) error {
+	key = CleanName(key)
+	if key == "" {
+		return nil
+	}
+	m.mu.Lock()
+	old := m.st.Output
+	if old == key {
+		m.mu.Unlock()
+		return nil
+	}
+	cur, st := m.cur.Clone(), m.st
+	m.mu.Unlock()
+	var err error
+	if old != "" {
+		err = m.keepFor(old, cur, st)
+	}
+	p, nst, ok := m.keptFor(key)
+	switch {
+	case ok:
+	case old == "":
+		p, nst = cur, st // the first output: the EQ it had
+	default:
+		p, nst = Default(), state{}
+	}
+	nst.Output = key
+	m.mu.Lock()
+	m.cur, m.st = p, nst
+	m.mu.Unlock()
+	m.apply()
+	m.saveSoon()
+	return err
+}
+
+// Output is the output the profile playing is kept for, "" before any.
+func (m *Manager) Output() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.st.Output
+}
+
+func (m *Manager) keepFor(key string, p Profile, st state) error {
+	dir := filepath.Join(m.dir, outputDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	p.Name = st.Preset
+	if err := writeAtomic(filepath.Join(dir, key+".txt"), []byte(FormatAPO(p))); err != nil {
+		return err
+	}
+	b, _ := json.Marshal(st)
+	return writeAtomic(filepath.Join(dir, key+".json"), b)
+}
+
+func (m *Manager) keptFor(key string) (Profile, state, bool) {
+	dir := filepath.Join(m.dir, outputDir)
+	f, err := os.Open(filepath.Join(dir, key+".txt"))
+	if err != nil {
+		return Profile{}, state{}, false
+	}
+	p, _, err := ParseAPO(f)
+	f.Close()
+	if err != nil || p.Validate() != nil {
+		return Profile{}, state{}, false
+	}
+	var st state
+	if b, err := os.ReadFile(filepath.Join(dir, key+".json")); err == nil {
+		_ = json.Unmarshal(b, &st)
+	}
+	p.Name = st.Preset
+	return p, st, true
 }

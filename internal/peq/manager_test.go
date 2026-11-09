@@ -136,3 +136,46 @@ func TestDamagedFilesFallBack(t *testing.T) {
 		t.Fatalf("fallback %+v", p)
 	}
 }
+
+func TestSetOutputKeepsAnEQPerOutput(t *testing.T) {
+	dir := t.TempDir()
+	m, err := Open(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tilted := Default()
+	tilted.Filters[0].Gain = -4
+	if err := m.SetProfile(tilted); err != nil {
+		t.Fatal(err)
+	}
+	// The first output takes what plays.
+	if err := m.SetOutput("speaker"); err != nil || m.Profile().Filters[0].Gain != -4 {
+		t.Fatalf("first output: %v %v", err, m.Profile().Filters[0].Gain)
+	}
+	// A new headset starts flat and on; shaped, it keeps its own.
+	if err := m.SetOutput("bt_AA"); err != nil || m.Profile().Filters[0].Gain != 0 || m.Bypassed() {
+		t.Fatalf("new output: %v %+v", err, m.Profile().Filters[0])
+	}
+	boosted := Default()
+	boosted.Filters[0].Gain = 3
+	m.SetProfile(boosted)
+	m.SetBypass(true)
+	// Back to the speaker: its EQ, on.
+	m.SetOutput("speaker")
+	if m.Profile().Filters[0].Gain != -4 || m.Bypassed() {
+		t.Fatalf("speaker again: %+v bypass %v", m.Profile().Filters[0], m.Bypassed())
+	}
+	// And the headset's, bypassed as it was left.
+	m.SetOutput("bt_AA")
+	if m.Profile().Filters[0].Gain != 3 || !m.Bypassed() || m.Output() != "bt_AA" {
+		t.Fatalf("headset again: %+v bypass %v", m.Profile().Filters[0], m.Bypassed())
+	}
+	// Reopened, as the background player opens it: on the headset's EQ.
+	if err := m.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	m2, err := Open(dir, nil)
+	if err != nil || m2.Output() != "bt_AA" || m2.Profile().Filters[0].Gain != 3 {
+		t.Fatalf("reopened: %v %q %+v", err, m2.Output(), m2.Profile().Filters[0])
+	}
+}
