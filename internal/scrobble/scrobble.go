@@ -1,13 +1,14 @@
-// Package scrobble sends what Boombrick plays to Last.fm. It watches the
-// player, records each play that counts by Last.fm's rule - a track longer
-// than 30 seconds, heard for half its length or 4 minutes, whichever comes
-// first - with the time it started, and sends what is waiting whenever
-// Last.fm can be reached, so plays heard away from Wi-Fi arrive later at
-// their own times. While a track plays it is also shown as now playing.
+// Package scrobble keeps Boombrick's listening history and sends it to
+// Last.fm. It watches the player and records each play that counts by
+// Last.fm's rule - a track longer than 30 seconds, heard for half its length
+// or 4 minutes, whichever comes first - with the time it started, in the
+// plays table, which Home's blocks read. With Last.fm set up it also sends
+// what is waiting whenever Last.fm can be reached, so plays heard away from
+// Wi-Fi arrive later at their own times, and shows the track playing.
 //
-// It runs only with credentials: lastfm.json in the data folder, holding
-// api_key, api_secret and session_key (a session from Last.fm's web
-// authorisation, which doesn't expire) and user.
+// Last.fm is set up by lastfm.json in the data folder, holding api_key,
+// api_secret and session_key (a session from Last.fm's web authorisation,
+// which doesn't expire) and user.
 package scrobble
 
 import (
@@ -40,7 +41,6 @@ const (
 	minLength = 30 * time.Second // shorter tracks aren't scrobbled
 	enough    = 4 * time.Minute  // heard this long, a track counts whatever its length
 	batch     = 50               // the most Last.fm takes in one request
-	keepSent  = 48 * time.Hour   // sent plays kept this long, against sending one twice
 	sameStart = 60               // seconds: two records of one play differ by less
 )
 
@@ -70,10 +70,11 @@ type Player interface {
 	State() player.State
 }
 
-// Scrobbler records plays and sends them.
+// Scrobbler records plays and, with Last.fm set up, sends them.
 type Scrobbler struct {
 	db       *sql.DB
 	creds    Creds
+	online   bool // Last.fm is set up
 	log      *slog.Logger
 	lock     string // held while sending, so the app and its background player don't both send
 	Endpoint string
@@ -84,21 +85,21 @@ type Scrobbler struct {
 	wake                       chan struct{}
 }
 
-// New returns a scrobbler for the data folder, or nil without credentials.
+// New returns a scrobbler for the data folder: it records plays, and sends
+// them only with Last.fm's credentials there.
 func New(db *sql.DB, data string, log *slog.Logger) *Scrobbler {
 	c, ok := LoadCreds(data)
-	if !ok {
-		return nil
-	}
-	return &Scrobbler{db: db, creds: c, log: log.With("from", "lastfm"), lock: filepath.Join(data, "lastfm.lock"),
+	return &Scrobbler{db: db, creds: c, online: ok, log: log.With("from", "lastfm"), lock: filepath.Join(data, "lastfm.lock"),
 		Endpoint: Endpoint, Client: &http.Client{Timeout: 20 * time.Second}, now: time.Now,
 		Look: time.Second, SendEvery: time.Minute, FirstSend: 10 * time.Second, wake: make(chan struct{}, 1)}
 }
 
-// Run watches p and sends until ctx ends.
+// Run watches p, and sends with Last.fm set up, until ctx ends.
 func (s *Scrobbler) Run(ctx context.Context, p Player) {
-	s.log.Info("scrobbling", "user", s.creds.User)
-	go s.sendLoop(ctx)
+	if s.online {
+		s.log.Info("scrobbling", "user", s.creds.User)
+		go s.sendLoop(ctx)
+	}
 	s.watch(ctx, p)
 }
 
@@ -152,7 +153,9 @@ func (s *Scrobbler) watch(ctx context.Context, p Player) {
 		}
 		if !shown {
 			shown = true
-			go s.nowPlaying(ctx, st.Track, dur)
+			if s.online {
+				go s.nowPlaying(ctx, st.Track, dur)
+			}
 		}
 		if !recorded && dur > minLength && st.Elapsed >= min(dur/2, enough) {
 			recorded = true
@@ -170,18 +173,21 @@ func (s *Scrobbler) record(it string, t player.Track, dur time.Duration, started
 		return nil // Last.fm wants both
 	}
 	var n int
-	if err := s.db.QueryRow(`SELECT count(*) FROM scrobbles WHERE item = ? AND abs(started - ?) < ?`,
+	if err := s.db.QueryRow(`SELECT count(*) FROM plays WHERE item = ? AND abs(started - ?) < ?`,
 		it, started.Unix(), sameStart).Scan(&n); err != nil {
 		return err
 	}
 	if n > 0 {
 		return nil
 	}
-	if _, err := s.db.Exec(`INSERT INTO scrobbles (item, artist, title, album, album_artist, duration, started)
+	if _, err := s.db.Exec(`INSERT INTO plays (item, artist, title, album, album_artist, duration, started)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`, it, t.Artist, t.Title, t.Album, t.AlbumArtist, int(dur.Seconds()), started.Unix()); err != nil {
 		return err
 	}
 	s.log.Info("play recorded", "artist", t.Artist, "title", t.Title)
+	if !s.online {
+		return nil
+	}
 	select {
 	case s.wake <- struct{}{}:
 	default:
@@ -231,7 +237,6 @@ func (s *Scrobbler) SendWaiting(ctx context.Context) error {
 		return nil
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-	_, _ = s.db.Exec(`DELETE FROM scrobbles WHERE sent = 1 AND started < ?`, s.now().Add(-keepSent).Unix())
 	for {
 		rows, err := s.waiting()
 		if err != nil || len(rows) == 0 {
@@ -244,7 +249,7 @@ func (s *Scrobbler) SendWaiting(ctx context.Context) error {
 		for i, r := range rows {
 			ids[i] = strconv.FormatInt(r.id, 10)
 		}
-		if _, err := s.db.Exec(`UPDATE scrobbles SET sent = 1 WHERE id IN (` + strings.Join(ids, ",") + `)`); err != nil {
+		if _, err := s.db.Exec(`UPDATE plays SET sent = 1 WHERE id IN (` + strings.Join(ids, ",") + `)`); err != nil {
 			return err
 		}
 		s.log.Info("scrobbled", "plays", len(rows))
@@ -259,7 +264,7 @@ type row struct {
 }
 
 func (s *Scrobbler) waiting() ([]row, error) {
-	q, err := s.db.Query(`SELECT id, artist, title, album, album_artist, duration, started FROM scrobbles
+	q, err := s.db.Query(`SELECT id, artist, title, album, album_artist, duration, started FROM plays
 		WHERE sent = 0 ORDER BY started LIMIT ?`, batch)
 	if err != nil {
 		return nil, err

@@ -167,6 +167,10 @@ var migrations = []string{
 		sent         INTEGER NOT NULL DEFAULT 0
 	);
 	CREATE INDEX scrobbles_item ON scrobbles(item, started)`,
+	// Every play that counts is kept as listening history, for Home's
+	// blocks; those not yet sent to Last.fm are its queue (sent = 0).
+	`ALTER TABLE scrobbles RENAME TO plays;
+	CREATE INDEX plays_started ON plays(started)`,
 }
 
 func migrate(db *sql.DB) error {

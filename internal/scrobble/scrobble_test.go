@@ -101,7 +101,7 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 
 func count(db *store.Store, where string) int {
 	var n int
-	db.DB.QueryRow(`SELECT count(*) FROM scrobbles WHERE ` + where).Scan(&n)
+	db.DB.QueryRow(`SELECT count(*) FROM plays WHERE ` + where).Scan(&n)
 	return n
 }
 
@@ -134,7 +134,7 @@ func TestAPlayCountsAtHalfAndIsSent(t *testing.T) {
 	// The background player, handed this play, sees it too, a few seconds
 	// apart by its own reckoning: not again.
 	var started int64
-	db.DB.QueryRow(`SELECT started FROM scrobbles`).Scan(&started)
+	db.DB.QueryRow(`SELECT started FROM plays`).Scan(&started)
 	if err := s.record(item(song), song, song.Duration, time.Unix(started+3, 0)); err != nil || count(db, "1") != 1 {
 		t.Fatalf("recorded twice: %v %d", err, count(db, "1"))
 	}
@@ -195,8 +195,18 @@ func TestOfflinePlaysWaitAndARefusedSessionStops(t *testing.T) {
 	}
 }
 
-func TestNoCredentialsNoScrobbler(t *testing.T) {
-	if New(nil, t.TempDir(), slog.Default()) != nil {
-		t.Fatal("a scrobbler without lastfm.json")
+func TestWithoutLastFMPlaysAreStillKept(t *testing.T) {
+	data := t.TempDir()
+	st, err := store.Open(filepath.Join(data, "boombrick.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := New(st.DB, data, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if s.online {
+		t.Fatal("online without lastfm.json")
+	}
+	if err := s.record(item(song), song, song.Duration, time.Now()); err != nil || count(st, "1") != 1 {
+		t.Fatalf("not kept: %v", err)
 	}
 }
