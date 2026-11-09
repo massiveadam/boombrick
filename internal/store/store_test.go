@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -218,5 +219,39 @@ func TestDownloadsTable(t *testing.T) {
 	if _, err := s.DB.Exec(`INSERT INTO queue (pos, path, title, artist, album_artist, album, gain, peak, has_gain, video_id)
 		VALUES (0, '', 'Night Drive Theory', 'Lumen Coast', '', '', 0, 0, 0, 'v1')`); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestOpenSetsADamagedDatabaseAside(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "boombrick.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	// Cut it short of its own pages, as a power cut on a FAT card did.
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	junk := append([]byte("SQLite format 3\x00"), make([]byte, 100)...)
+	copy(b[100:], junk) // the schema's page header, overwritten
+	if err := os.WriteFile(path, b[:len(b)/2+1], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(path)
+	if err != nil {
+		t.Fatalf("not reopened: %v", err)
+	}
+	defer s.Close()
+	if s.SetAside == "" {
+		t.Fatal("nothing set aside")
+	}
+	if _, err := os.Stat(s.SetAside); err != nil {
+		t.Fatalf("the damaged file is gone: %v", err)
+	}
+	var n int
+	if err := s.DB.QueryRow(`SELECT count(*) FROM settings`).Scan(&n); err != nil {
+		t.Fatalf("the new database: %v", err)
 	}
 }
