@@ -64,7 +64,7 @@ The Downloader card updates yt-dlp, which YouTube Music downloads use, the same 
 | A | Play or open; on Home, open the album |
 | B | Back |
 | X | Download (YouTube Music); shuffle an artist or a genre (Library); on Home, play the album |
-| Y | Add to the queue; on Now Playing, lyrics. Hold for 2 s: the queue |
+| Y | Add to the queue; on Now Playing, lyrics. Hold: the queue |
 | L1, R1 | Switch tabs; on Now Playing, previous and next track |
 | L2, R2 | Filters in the Library and YouTube Music; on Now Playing and Lyrics, 10 s back and on, or hold to rewind and fast-forward |
 | Start | Now Playing |

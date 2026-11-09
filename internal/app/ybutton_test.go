@@ -45,3 +45,32 @@ func TestSelectWithNothingPlaying(t *testing.T) {
 		t.Fatalf("pages %d, heard %v, toast %q", len(a.shell.stacks[0]), tab.got, a.shell.toast)
 	}
 }
+
+// X and A together rescan, and neither reaches the screen; either alone
+// reaches it once chordWait has passed, or at once when it is let go.
+func TestXAndAChord(t *testing.T) {
+	a, tab := darkApp(nil)
+	a.chordWait = chordWait
+	rescans := 0
+	a.opts.Rescan = func() { rescans++ }
+	a.dispatch(press(input.X))
+	a.dispatch(press(input.A))
+	a.dispatch(release(input.X))
+	a.dispatch(release(input.A))
+	a.chordHeld(time.Now().Add(time.Second))
+	if rescans != 1 || len(tab.got) != 0 {
+		t.Fatalf("together: rescans %d, the screen heard %v", rescans, tab.got)
+	}
+
+	a.dispatch(press(input.A))
+	if len(tab.got) != 0 {
+		t.Fatal("A reached the screen before the wait")
+	}
+	a.chordHeld(time.Now().Add(chordWait))
+	a.dispatch(release(input.A))
+	a.dispatch(press(input.X))
+	a.dispatch(release(input.X)) // a quick tap
+	if want := []input.Button{input.A, input.A, input.X, input.X}; !slices.Equal(tab.got, want) || rescans != 1 {
+		t.Fatalf("alone: the screen heard %v, rescans %d", tab.got, rescans)
+	}
+}

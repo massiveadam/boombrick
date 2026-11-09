@@ -301,6 +301,13 @@ type App struct {
 	// go before yHold it is theirs (a tap), held that long it opens the Queue.
 	yAt                   time.Time
 	nowPlayingAt, queueAt int // the Now Playing and Queue overlays' indexes
+	// chordAt is when chordBtn, A or X, went down, kept from the screens for
+	// chordWait in case the other follows: together they rescan. chorded is
+	// set from then until both are let go, so neither acts.
+	chordAt   time.Time
+	chordBtn  input.Button
+	chorded   bool
+	chordWait time.Duration // 0: A and X go straight to the screens
 	// browsing is the player as the Library and album pages have it: playing
 	// opens Now Playing.
 	browsing  showsPlaying
@@ -387,6 +394,7 @@ func New(opts Options) (*App, error) {
 	u.Status = ui.Status{Online: true, Battery: -1}
 
 	a := &App{
+		chordWait:  chordWait,
 		opts:       opts,
 		window:     win,
 		renderer:   r,
@@ -657,6 +665,7 @@ func (a *App) Run() error {
 			continue // powering off
 		}
 		a.yHeld(now)
+		a.chordHeld(now)
 		a.poll()
 		a.dimIdle(now)
 		if a.dimmed && a.dimBlack {
@@ -1030,6 +1039,9 @@ func (a *App) timeout(start, now time.Time) time.Duration {
 	if !a.yAt.IsZero() {
 		timeout = min(timeout, a.yAt.Add(yHold).Sub(now)) // held that long, it opens the Queue
 	}
+	if !a.chordAt.IsZero() {
+		timeout = min(timeout, a.chordAt.Add(a.chordWait).Sub(now)) // then it's A or X alone
+	}
 	if a.dark {
 		return max(timeout, 0) // nothing shows, so nothing ticks
 	}
@@ -1181,15 +1193,18 @@ func (a *App) dispatch(e input.Event) {
 	if a.handing.Load() {
 		return // the music is being handed over
 	}
+	if e.Button == input.A || e.Button == input.X {
+		if a.chord(e, now) {
+			return
+		}
+	} else if e.Kind == input.Press {
+		a.chordHeld(now.Add(a.chordWait)) // another button: the A or X waiting comes first
+	}
 	if e.Button == input.Y && a.holdY(e, now) {
 		return
 	}
 	if a.opts.QuitChord && a.held(input.Menu) && e.Button == input.Start && e.Kind == input.Press {
 		a.quit = true
-		return
-	}
-	if e.Kind == input.Press && !a.dark && (e.Button == input.A && a.held(input.X) || e.Button == input.X && a.held(input.A)) {
-		a.rescanNow() // X and A together, anywhere
 		return
 	}
 	if a.dark {
@@ -1341,7 +1356,67 @@ func (a *App) lightUp() {
 
 // yHold is how long Y is held to open the Queue; a shorter press is the
 // screen's Y, as adding to the queue.
-const yHold = 2 * time.Second
+const yHold = 800 * time.Millisecond
+
+// chordWait is how long A or X waits for the other, to tell X and A pressed
+// together from either alone: too short to feel.
+const chordWait = 80 * time.Millisecond
+
+// chord handles A and X: either is held back chordWait for the other, and
+// the two together rescan the library. It reports whether it kept e from the
+// screens. Where a dialog claims the button, or with the screen off, they
+// are the screen's at once.
+func (a *App) chord(e input.Event, now time.Time) bool {
+	if a.dark || a.handing.Load() || a.chordWait == 0 {
+		return false
+	}
+	if c, ok := a.shell.active().(screens.Claimer); ok && c.Claims(e.Button) {
+		return false
+	}
+	other := input.X
+	if e.Button == input.X {
+		other = input.A
+	}
+	switch e.Kind {
+	case input.Press:
+		if !a.chordAt.IsZero() && a.chordBtn == other {
+			a.chordAt, a.chorded = time.Time{}, true
+			a.rescanNow()
+			return true
+		}
+		if a.chorded {
+			return true
+		}
+		a.chordHeld(now.Add(a.chordWait)) // a different one waiting: it goes first
+		a.chordAt, a.chordBtn = now, e.Button
+		return true
+	case input.Release:
+		if a.chorded {
+			if !a.held(input.A) && !a.held(input.X) {
+				a.chorded = false
+			}
+			return true
+		}
+		if !a.chordAt.IsZero() && a.chordBtn == e.Button {
+			a.chordHeld(now.Add(a.chordWait)) // a quick tap: the press, then this release
+		}
+		return false
+	}
+	return a.chorded || !a.chordAt.IsZero() && a.chordBtn == e.Button // repeats wait too
+}
+
+// chordHeld gives the screens the A or X press waiting, once chordWait has
+// passed at now.
+func (a *App) chordHeld(now time.Time) {
+	if a.chordAt.IsZero() || now.Sub(a.chordAt) < a.chordWait {
+		return
+	}
+	a.chordAt = time.Time{}
+	if a.shell.handle(input.Event{Button: a.chordBtn, Kind: input.Press}, now) {
+		a.dirty = true
+		a.homeAgain()
+	}
+}
 
 // holdY keeps Y from the screens while it is down, and reports whether it
 // did: let go before yHold, the screen hears the press and release then.
