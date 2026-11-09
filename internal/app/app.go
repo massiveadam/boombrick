@@ -874,7 +874,7 @@ func (a *App) showHome(progress []resume.Progress) {
 			row, ok = home.HistoryRow(b.ID, a.history, a.ix, now, a.playAlbum, a.queueAlbum)
 		}
 		if ok {
-			rows = append(rows, row)
+			rows = append(rows, home.Styled(row, b.Style))
 		}
 	}
 	a.home.SetRows(rows)

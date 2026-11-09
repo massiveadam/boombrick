@@ -31,8 +31,12 @@ type Row struct {
 	Title, Meta string
 	Items       []Item
 	Cards       bool // 200 px cards with captions; otherwise 166 px tiles
-	Continue    bool // cards carry a source badge and a progress strip
-	Spotify     bool // A opens and X imports, instead of play and download
+	// Size, when set, is the items' size instead, and Caption whether they
+	// carry their title and subtitle: Home's views (home.Styles).
+	Size     float64
+	Caption  bool
+	Continue bool // cards carry a source badge and a progress strip
+	Spotify  bool // A opens and X imports, instead of play and download
 }
 
 // Status is the status bar of the design frames.

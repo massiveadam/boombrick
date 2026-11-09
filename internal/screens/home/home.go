@@ -30,6 +30,7 @@ const (
 	side       = 32
 	cardSize   = 200
 	tileSize   = 166
+	largeSize  = 240 // the Large view's
 	cardGap    = 32
 	tileGap    = 28
 	headingGap = 20 // heading to its items
@@ -268,16 +269,11 @@ func (h *Home) layout(u *ui.Context) {
 		return
 	}
 	headH := float64(u.LineHeight(text.Heading))
-	cardH := float64(widgets.CardHeight(u, cardSize))
 	h.tops = make([]float64, len(h.rows))
 	y := 0.0
 	for i, r := range h.rows {
 		h.tops[i] = y
-		itemH := float64(tileSize)
-		if r.Cards {
-			itemH = cardH
-		}
-		y += headH + headingGap + itemH + rowGap
+		y += headH + headingGap + float64(itemHeight(u, r)) + rowGap
 	}
 	h.scroll.Set(h.scrollTarget())
 }
@@ -291,10 +287,27 @@ func (h *Home) scrollTarget() float64 {
 
 // itemSize is a row's item size and the gap between its items.
 func itemSize(r fixture.Row) (size, gap float64) {
-	if r.Cards {
+	switch {
+	case r.Size >= cardSize:
+		return r.Size, cardGap
+	case r.Size > 0:
+		return r.Size, tileGap
+	case r.Cards:
 		return cardSize, cardGap
 	}
 	return tileSize, tileGap
+}
+
+// captioned reports whether a row's items carry their title and subtitle.
+func captioned(r fixture.Row) bool { return r.Cards || r.Caption }
+
+// itemHeight is the height of a row's items: the art, and its caption.
+func itemHeight(u *ui.Context, r fixture.Row) float32 {
+	size, _ := itemSize(r)
+	if captioned(r) {
+		return widgets.CardHeight(u, float32(size))
+	}
+	return float32(size)
 }
 
 // offsetTarget scrolls a row sideways as little as possible to keep item col
@@ -401,16 +414,13 @@ func (h *Home) Draw(u *ui.Context) {
 
 	u.PushClip(gfx.Rect{X: 0, Y: contentTop, W: theme.ScreenW, H: contentBot - contentTop})
 	base := float32(contentTop+padTop) - float32(h.scroll.At(now))
-	headH, cardH := u.LineHeight(text.Heading), widgets.CardHeight(u, cardSize)
+	headH := u.LineHeight(text.Heading)
 	var fx, fy, fsize float32 // where the focused item goes
 	for ri := range h.rows {
 		r := &h.rows[ri]
 		top := base + float32(h.tops[ri])
 		itemsTop := top + headH + headingGap
-		itemH := float32(tileSize)
-		if r.Cards {
-			itemH = cardH
-		}
+		itemH := itemHeight(u, *r)
 		// A row out of view draws only its items with focus, whose glows
 		// reach into view.
 		shown := top < contentBot && itemsTop+itemH > contentTop
@@ -472,7 +482,7 @@ func drawItem(u *ui.Context, r *fixture.Row, ci int, x, y, size, k float32) {
 	it := &r.Items[ci]
 	widgets.CardGlow(u, x, y, size, k)
 	widgets.Card(u, widgets.CardItem{Title: it.Title, Subtitle: it.Subtitle, Art: it.Art, Source: it.Source,
-		Badge: r.Continue, Progress: it.Progress}, x, y, size, k, r.Cards)
+		Badge: r.Continue, Progress: it.Progress}, x, y, size, k, captioned(*r))
 }
 
 // The hint bars that don't depend on the focused item, and those for sample

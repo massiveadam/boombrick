@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"slices"
 	"time"
 
 	"github.com/ujjwal313/boombrick/internal/platform/input"
@@ -13,9 +14,9 @@ import (
 	"github.com/ujjwal313/boombrick/internal/ui/widgets"
 )
 
-// homePage is the Home page: Home's blocks in order, each on or off. A
-// switches the focused one, X and Y move it up and down; each change is kept
-// at once and Home follows it.
+// homePage is the Home page: Home's blocks in order, each on or off and in a
+// view. A switches the focused one, ◀ ▶ change its view, X and Y move it up
+// and down; each change is kept at once and Home follows it.
 type homePage struct {
 	blocks []home.Block // every block: those shown first, then any this build can't show
 	shown  int          // how many are shown
@@ -25,7 +26,8 @@ type homePage struct {
 }
 
 func newHomePage(s *Screen) *homePage {
-	p := &homePage{hints: []widgets.Hint{{Key: "A", Label: "Switch"}, {Key: "X", Label: "Up"}, {Key: "Y", Label: "Down"}, {Key: "B", Label: "Back"}}}
+	p := &homePage{hints: []widgets.Hint{{Key: "A", Label: "On/off"}, {Key: "◀ ▶", Label: "View"},
+		{Key: "X", Label: "Up"}, {Key: "Y", Label: "Down"}, {Key: "B", Label: "Back"}}}
 	var hidden []home.Block
 	for _, b := range home.Blocks(s.opts.Prefs.String(keys.HomeBlocks)) {
 		if b.ID == home.BlockSpotify && s.opts.Spotify == nil {
@@ -57,6 +59,17 @@ func (p *homePage) handle(s *Screen, ev input.Event, now time.Time) bool {
 		return move(p.focus - 1)
 	case input.Down:
 		return move(p.focus + 1)
+	case input.Left, input.Right:
+		step := 1
+		if ev.Button == input.Left {
+			step = -1
+		}
+		b := &p.blocks[p.focus]
+		i := slices.IndexFunc(home.Styles, func(s struct{ ID, Label string }) bool { return s.ID == b.Style })
+		i = (i + step + len(home.Styles)) % len(home.Styles)
+		b.Style, b.On = home.Styles[i].ID, true
+		p.save(s)
+		return true
 	}
 	if ev.Kind != input.Press {
 		return false
@@ -77,11 +90,16 @@ func (p *homePage) handle(s *Screen, ev input.Event, now time.Time) bool {
 	default:
 		return false
 	}
+	p.save(s)
+	return true
+}
+
+// save keeps the blocks, and has Home follow them.
+func (p *homePage) save(s *Screen) {
 	s.opts.Prefs.Set(keys.HomeBlocks, home.BlocksSetting(p.blocks))
 	if s.opts.HomeChanged != nil {
 		s.opts.HomeChanged()
 	}
-	return true
 }
 
 func (p *homePage) back(s *Screen) bool {
@@ -100,7 +118,7 @@ func (p *homePage) draw(s *Screen, u *ui.Context) {
 		if i == p.focus {
 			widgets.SettingFocus(u, row, 1)
 		}
-		ink, value := theme.Paper, "On"
+		ink, value := theme.Paper, home.StyleLabel(b.Style)
 		if !b.On {
 			ink, value = theme.Ink3, "Off"
 		}

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ujjwal313/boombrick/internal/fixture"
 	"github.com/ujjwal313/boombrick/internal/history"
 	"github.com/ujjwal313/boombrick/internal/library"
 )
@@ -91,5 +92,22 @@ func TestHistoryRows(t *testing.T) {
 	r, ok := RandomRow(ix, rand.New(rand.NewPCG(1, 2)), noop, noop)
 	if !ok || len(r.Items) != 3 {
 		t.Fatalf("random: %v %d", ok, len(r.Items))
+	}
+}
+
+func TestBlockStyles(t *testing.T) {
+	bs := Blocks("random:covers,!continue:small,recently_played:bogus")
+	if bs[0].Style != StyleCovers || bs[1].Style != StyleSmall || bs[1].On || bs[2].Style != StyleLarge {
+		t.Fatalf("styles: %+v", bs[:3])
+	}
+	if Blocks(BlocksSetting(bs))[0].Style != StyleCovers {
+		t.Fatal("a style isn't kept")
+	}
+	r := Styled(fixture.Row{Cards: true}, StyleCovers)
+	if r.Caption || r.Cards || r.Size != tileSize {
+		t.Fatalf("covers: %+v", r)
+	}
+	if r := Styled(fixture.Row{}, StyleLarge); !r.Caption || r.Size != largeSize {
+		t.Fatalf("large: %+v", r)
 	}
 }
