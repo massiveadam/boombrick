@@ -430,3 +430,37 @@ func TestMassDeleteRefused(t *testing.T) {
 		t.Fatalf("allowed: deleted %d, %v", res.Deleted, err)
 	}
 }
+
+// Quick: with the manifest the last full pull synced, a pull asks only for
+// its version; a new manifest, or a pull that failed, syncs again.
+func TestQuickPull(t *testing.T) {
+	s := newServer(t, map[string]string{"A/1.opus": "one"})
+	gets := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/manifest.json", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			gets++
+		}
+		http.ServeFile(w, r, s.manifest)
+	})
+	mux.Handle("/", http.FileServer(http.Dir(s.root)))
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	src := HTTPSource{Base: ts.URL + "/"}
+	dest := t.TempDir()
+	ctx := context.Background()
+	quick := Options{Delete: true, Quick: true}
+	if res, err := Pull(ctx, src, dest, quick); err != nil || res.Got != 1 || res.Unchanged {
+		t.Fatalf("first: %+v %v", res, err)
+	}
+	if res, err := Pull(ctx, src, dest, quick); err != nil || !res.Unchanged || gets != 1 {
+		t.Fatalf("second: unchanged %v, manifest fetched %d times, %v", res.Unchanged, gets, err)
+	}
+	library(t, s.root, map[string]string{"A/2.opus": "two"})
+	s.rebuild(t)
+	later := time.Now().Add(time.Hour)
+	os.Chtimes(s.manifest, later, later)
+	if res, err := Pull(ctx, src, dest, quick); err != nil || res.Unchanged || res.Got != 1 {
+		t.Fatalf("after a change: %+v %v", res, err)
+	}
+}

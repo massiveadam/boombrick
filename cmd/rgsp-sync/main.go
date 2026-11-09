@@ -129,7 +129,7 @@ func pull(args []string, auto bool) error {
 		g := musicsync.Gate{HomeSSIDs: splitList(*home), MinBattery: *minBat,
 			SSID: musicsync.CurrentSSID, Battery: musicsync.BatteryFrom("/sys")}
 		if ok, why := g.Allow(); !ok {
-			log.Info("not syncing", "why", why)
+			sayOnce(*to, "not syncing: "+why) // tried every minute: said only when it changes
 			return nil
 		}
 	}
@@ -149,11 +149,16 @@ func pull(args []string, auto bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	start := time.Now()
-	opts := musicsync.Options{DryRun: *dry, Delete: *del, Reserve: *reserve << 20, MaxDelete: *maxDel, Log: log}
+	opts := musicsync.Options{DryRun: *dry, Delete: *del, Reserve: *reserve << 20, MaxDelete: *maxDel, Quick: auto, Log: log}
 	if *playingKB > 0 {
 		opts.Limit = musicsync.WhilePlaying(*playing, *playingKB<<10)
 	}
 	res, err := musicsync.Pull(ctx, src, *to, opts)
+	if res.Unchanged && err == nil {
+		sayOnce(*to, "up to date")
+		return nil
+	}
+	sayOnce(*to, "")
 	verb := "synced"
 	if *dry {
 		verb = "would sync"
@@ -235,4 +240,18 @@ func transcodeCmd(args []string) error {
 		fmt.Println("  failed ", p, e)
 	}
 	return err
+}
+
+// sayOnce prints msg, with the time, unless it is what the last run said:
+// auto runs every minute, and its log keeps only what changed. "" forgets it.
+func sayOnce(dest, msg string) {
+	p := filepath.Join(dest, ".rgsp-sync", "said")
+	if b, _ := os.ReadFile(p); string(b) == msg {
+		return
+	}
+	if msg != "" {
+		fmt.Println(time.Now().Format("2006-01-02 15:04:05"), msg)
+	}
+	os.MkdirAll(filepath.Dir(p), 0o755)
+	os.WriteFile(p, []byte(msg), 0o644)
 }

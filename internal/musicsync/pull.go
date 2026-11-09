@@ -97,6 +97,38 @@ func (h HTTPSource) Manifest(ctx context.Context) (Manifest, error) {
 	return m, err
 }
 
+// Version asks the server, without fetching it, which version of the
+// manifest it has: its ETag, else its Last-Modified time. "" when the server
+// gives neither.
+func (h HTTPSource) Version(ctx context.Context) (string, error) {
+	u := h.ManifestURL
+	if u == "" {
+		u = h.Base + "manifest.json"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, u, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := h.client().Do(req)
+	if err != nil {
+		return "", err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("musicsync: manifest: %s", resp.Status)
+	}
+	if v := resp.Header.Get("ETag"); v != "" {
+		return v, nil
+	}
+	return resp.Header.Get("Last-Modified"), nil
+}
+
+// Versioned is a Source that can say which manifest it has without sending
+// it, so a pull with nothing new costs a few hundred bytes.
+type Versioned interface {
+	Version(ctx context.Context) (string, error)
+}
+
 // Open fetches the file from offset, with a Range request when offset > 0. A
 // server that ignores the range is refused, so a resumed file never gets the
 // wrong bytes.
@@ -148,6 +180,10 @@ type Options struct {
 	Delete bool
 	// Reserve is space to leave free on the card, in bytes.
 	Reserve int64
+	// Quick skips the pull when the source is Versioned and its manifest is
+	// the one the last pull synced in full: the check every minute costs
+	// next to nothing.
+	Quick bool
 	// MaxDelete is the most of the files synced before that one pull may
 	// delete, as a fraction: a server suddenly listing far fewer files (its
 	// disk not mounted, say) deletes nothing; the rest still syncs. 0 is
@@ -173,6 +209,9 @@ type Result struct {
 	Plan
 	Got, Deleted int
 	Failed       map[string]error
+	// Unchanged: the server's manifest is the one the last complete pull
+	// synced, so nothing was looked at (Options.Quick).
+	Unchanged bool
 }
 
 // DefaultMaxDelete is the most of the synced files a pull deletes unless told
@@ -193,6 +232,17 @@ func Pull(ctx context.Context, src Source, dest string, opts Options) (Result, e
 	log := opts.Log
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	var version string
+	if vs, ok := src.(Versioned); ok && opts.Quick && !opts.DryRun {
+		v, err := vs.Version(ctx)
+		if err != nil {
+			return Result{}, err
+		}
+		if b, _ := os.ReadFile(filepath.Join(dest, stateDir, doneName)); v != "" && string(b) == v {
+			return Result{Unchanged: true}, nil
+		}
+		version = v
 	}
 	m, err := src.Manifest(ctx)
 	if err != nil {
@@ -271,10 +321,19 @@ func Pull(ctx context.Context, src Source, dest string, opts Options) (Result, e
 		return res, err
 	}
 	if len(res.Failed) > 0 {
+		os.Remove(filepath.Join(dest, stateDir, doneName))
 		return res, fmt.Errorf("musicsync: %d file(s) failed", len(res.Failed))
+	}
+	if version != "" {
+		// All of this manifest is synced: until it changes, Quick looks no further.
+		_ = writeAtomic(filepath.Join(dest, stateDir, doneName), []byte(version))
 	}
 	return res, nil
 }
+
+// doneName is the file in the state folder holding the version of the
+// manifest last synced in full.
+const doneName = "done"
 
 // makePlan compares the manifest with what was synced and what is on disk.
 // A file on disk counts as up to date only if Pull synced it with the same

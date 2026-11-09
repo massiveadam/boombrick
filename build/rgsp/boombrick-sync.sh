@@ -5,12 +5,13 @@
 # only on a home Wi-Fi network, and on battery only above MIN_BATTERY (a
 # charger always qualifies). On battery the device suspends when idle, and
 # nothing runs then: it syncs while awake. Each run is resumable and fetches
-# only what changed.
+# only what changed; when the server's list hasn't changed since the last
+# complete run, a try is one small request, so trying every minute is cheap.
 #
 # Settings: Roms/Ports/boombrick/sync.conf, shell variables:
 #   SERVER=http://192.168.1.108:8099     the read-only server (music/ and meta/manifest.json)
 #   HOME_SSID=MyWifi                      comma-separated home networks
-#   EVERY=1800                            seconds between tries (default 30 min)
+#   EVERY=60                              seconds between tries (default a minute)
 #   MIN_BATTERY=30                        least battery, percent, to sync off the charger
 #                                         (101: only on the charger)
 #   PLAYING_KBPS=256                      while music plays, download at most this many KB/s:
@@ -29,9 +30,8 @@ sleep 60 # Wi-Fi first: plorpOS joins in the background
 while :; do
 	# Kept short: the last run or so is what anyone reads.
 	[ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt 262144 ] && mv -f "$LOG" "$LOG.1"
-	echo "$(date '+%F %T') sync" >> "$LOG"
 	"$DIR/bin/rgsp-sync" auto -from "$SERVER/music/" -manifest "$SERVER/meta/manifest.json" \
 		-to "$SD/Music/Library" -delete -home-ssid "$HOME_SSID" -min-battery "${MIN_BATTERY:-30}" \
 		-playing-kbps "${PLAYING_KBPS:-256}" >> "$LOG" 2>&1
-	sleep "${EVERY:-1800}"
+	sleep "${EVERY:-60}"
 done
