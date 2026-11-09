@@ -402,3 +402,31 @@ func TestWhilePlaying(t *testing.T) {
 		t.Fatal("limited while paused")
 	}
 }
+
+// A server suddenly listing far fewer files deletes nothing, as when its
+// disk isn't mounted; the files it still lists sync as usual.
+func TestMassDeleteRefused(t *testing.T) {
+	files := map[string]string{"Keep/a.opus": "keep"}
+	for i := range 80 {
+		files[fmt.Sprintf("Gone/%02d.opus", i)] = fmt.Sprint("song ", i)
+	}
+	s := newServer(t, files)
+	dest := t.TempDir()
+	ctx := context.Background()
+	if _, err := Pull(ctx, s.source(), dest, Options{Delete: true}); err != nil {
+		t.Fatal(err)
+	}
+	os.RemoveAll(filepath.Join(s.root, "Gone"))
+	s.rebuild(t)
+	res, err := Pull(ctx, s.source(), dest, Options{Delete: true})
+	if err != nil || res.Deleted != 0 {
+		t.Fatalf("pull: deleted %d, %v", res.Deleted, err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "Gone/00.opus")); err != nil {
+		t.Fatal("a file was deleted")
+	}
+	res, err = Pull(ctx, s.source(), dest, Options{Delete: true, MaxDelete: 1})
+	if err != nil || res.Deleted != 80 {
+		t.Fatalf("allowed: deleted %d, %v", res.Deleted, err)
+	}
+}

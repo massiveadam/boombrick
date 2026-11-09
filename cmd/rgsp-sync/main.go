@@ -115,6 +115,7 @@ func pull(args []string, auto bool) error {
 	del := fs.Bool("delete", false, "remove files this tool synced earlier that the server no longer lists")
 	dry := fs.Bool("dry-run", false, "show what would happen, change nothing")
 	reserve := fs.Int64("reserve-mb", 512, "space to leave free on the card, MB")
+	maxDel := fs.Float64("max-delete", musicsync.DefaultMaxDelete, "with -delete, the most of the files synced before one run may delete (a fraction; 1 for any)")
 	home := fs.String("home-ssid", "", "auto: comma-separated Wi-Fi networks that are home")
 	minBat := fs.Int("min-battery", 40, "auto: least battery, percent, to sync without a charger")
 	playingKB := fs.Int64("playing-kbps", 0, "while music plays (plorpOS's playing file says so), download at most this many KB/s; 0 for no limit")
@@ -148,7 +149,7 @@ func pull(args []string, auto bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	start := time.Now()
-	opts := musicsync.Options{DryRun: *dry, Delete: *del, Reserve: *reserve << 20, Log: log}
+	opts := musicsync.Options{DryRun: *dry, Delete: *del, Reserve: *reserve << 20, MaxDelete: *maxDel, Log: log}
 	if *playingKB > 0 {
 		opts.Limit = musicsync.WhilePlaying(*playing, *playingKB<<10)
 	}

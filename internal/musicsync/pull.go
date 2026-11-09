@@ -148,6 +148,11 @@ type Options struct {
 	Delete bool
 	// Reserve is space to leave free on the card, in bytes.
 	Reserve int64
+	// MaxDelete is the most of the files synced before that one pull may
+	// delete, as a fraction: a server suddenly listing far fewer files (its
+	// disk not mounted, say) deletes nothing; the rest still syncs. 0 is
+	// DefaultMaxDelete; 1 or more lets any number go.
+	MaxDelete float64
 	// Limit, when set, is the most bytes a second to download, asked as it
 	// goes: 0 for no limit. The RG SP's Wi-Fi and Bluetooth share a radio,
 	// and a sync at full speed makes Bluetooth audio stutter.
@@ -169,6 +174,15 @@ type Result struct {
 	Got, Deleted int
 	Failed       map[string]error
 }
+
+// DefaultMaxDelete is the most of the synced files a pull deletes unless told
+// otherwise: a quarter. Renaming many albums (adding disc numbers) took a
+// tenth.
+const DefaultMaxDelete = 0.25
+
+// minDeleteGuard is how many deletions are always allowed, so a small
+// library can still lose a whole album.
+const minDeleteGuard = 50
 
 // ErrNoSpace is returned when the card hasn't room for what is to come.
 var ErrNoSpace = errors.New("musicsync: not enough free space")
@@ -192,6 +206,14 @@ func Pull(ctx context.Context, src Source, dest string, opts Options) (Result, e
 		return Result{}, err
 	}
 	plan := makePlan(m, st, dest, opts.Delete)
+	maxDel := opts.MaxDelete
+	if maxDel == 0 {
+		maxDel = DefaultMaxDelete
+	}
+	if n := len(plan.Delete); n > minDeleteGuard && float64(n) > maxDel*float64(len(st.Files)) {
+		log.Warn("not deleting: the server lists far fewer files than were synced", "delete", n, "synced", len(st.Files))
+		plan.Delete = nil
+	}
 	res := Result{Plan: plan, Failed: map[string]error{}}
 	log.Info("sync plan", "get", len(plan.Get), "delete", len(plan.Delete), "bytes", plan.Bytes, "kept", plan.Kept)
 	if opts.DryRun {
