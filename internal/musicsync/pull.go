@@ -200,6 +200,19 @@ func Pull(ctx context.Context, src Source, dest string, opts Options) (Result, e
 	// file: rewritten and synced each time, on a FAT card it cost more than
 	// the music (a 14,000-file library filled at a third of the card's speed).
 	// A file in place but not yet in the saved state is only fetched again.
+	// Deleted first: a file renamed on the server is otherwise on the card
+	// twice, by both names, until the whole download is done - an album
+	// listed with every song doubled for hours.
+	for _, p := range plan.Delete {
+		full := onCard(dest, p)
+		if err := os.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
+			res.Failed[p] = err
+			continue
+		}
+		removeEmptyParents(dest, filepath.Dir(full))
+		delete(st.Files, p)
+		res.Deleted++
+	}
 	saved := time.Now()
 	stopped := func(err error) (Result, error) {
 		if serr := saveState(dest, st); serr != nil {
@@ -227,16 +240,6 @@ func Pull(ctx context.Context, src Source, dest string, opts Options) (Result, e
 			}
 			saved = time.Now()
 		}
-	}
-	for _, p := range plan.Delete {
-		full := onCard(dest, p)
-		if err := os.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
-			res.Failed[p] = err
-			continue
-		}
-		removeEmptyParents(dest, filepath.Dir(full))
-		delete(st.Files, p)
-		res.Deleted++
 	}
 	if err := saveState(dest, st); err != nil {
 		return res, err
