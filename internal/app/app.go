@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image/color"
 	"log/slog"
+	"math/rand/v2"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/ujjwal313/boombrick/assets"
 	"github.com/ujjwal313/boombrick/internal/fixture"
+	"github.com/ujjwal313/boombrick/internal/history"
 	"github.com/ujjwal313/boombrick/internal/library"
 	lrc "github.com/ujjwal313/boombrick/internal/lyrics"
 	"github.com/ujjwal313/boombrick/internal/media"
@@ -65,9 +67,16 @@ type Options struct {
 	// progress moved on to another track or stopped.
 	Load     func() (*library.Index, error)
 	Progress func() ([]resume.Progress, error)
-	Rescan   func()
-	Scanned  <-chan ScanUpdate
-	Saved    <-chan struct{}
+	// History reads the listening history, for Home's history blocks; nil
+	// shows none of them.
+	History func() (*history.History, error)
+	// AfterScan runs once, on a goroutine of its own, when the first library
+	// scan ends; reporting true reads the history again, as after a Last.fm
+	// history was taken in.
+	AfterScan func() bool
+	Rescan    func()
+	Scanned   <-chan ScanUpdate
+	Saved     <-chan struct{}
 	// Status reads the battery, network and Bluetooth for the status bar; the
 	// app calls it on a goroutine every 10 s from start-up while the screen is
 	// on, and as it comes back on.
@@ -298,6 +307,9 @@ type App struct {
 	expiredOnce bool
 	playlists   []spotify.Playlist
 	progress    []resume.Progress
+	history     *history.History // as last read, for Home's history blocks
+	homeDraw    uint64           // Random albums' draw: a new one each time Home is gone back to
+	lastTab     int
 
 	loads *loader
 	// set by the forwarding goroutines, taken by poll
@@ -397,6 +409,8 @@ func New(opts Options) (*App, error) {
 	a.home.SetEmpty(opts.MusicDir, func() { a.rescan(); a.Toast(screens.Scanning) })
 	a.library = browse.New(a, opts.Player, opts.MusicDir, a.rescan)
 	a.loads = newLoader(opts.Load, opts.Progress, a.wake)
+	a.loads.history = opts.History
+	a.homeDraw = uint64(time.Now().UnixNano()) // a new draw of Random albums each launch
 	if opts.Scanned != nil {
 		go func() {
 			for u := range opts.Scanned {
@@ -500,6 +514,7 @@ func (a *App) quickMenu() *quickmenu.Menu {
 		if _, ok := a.opts.Backlight.(Dimmer); ok && a.opts.DimAfter > 0 {
 			o.Dimming = true
 		}
+		o.HomeChanged = func() { a.showHome(a.progress) }
 		if a.opts.Space != nil {
 			o.Space = a.opts.Space
 			a.forward(a.opts.Space.Ready(), &a.redraw)
@@ -688,6 +703,15 @@ func (a *App) poll() {
 		ended, changed, saved := a.scanDone.Swap(false), a.scanChanged.Swap(false), a.saves.Swap(false)
 		if ended {
 			a.scanEnded = true
+			if f := a.opts.AfterScan; f != nil {
+				a.opts.AfterScan = nil // once
+				go func() {
+					if f() {
+						a.saves.Store(true) // read the history again, and show it
+						a.wake()
+					}
+				}()
+			}
 		}
 		if read, index := reloadAfter(ended, changed, saved, a.ix != nil); read {
 			a.loads.start(index, a.scanEnded)
@@ -710,6 +734,9 @@ func (a *App) poll() {
 					a.library.SetIndex(r.ix)
 					a.opts.Log.Info("loaded library", "albums", len(r.ix.Albums), "artists", len(r.ix.Artists),
 						"songs", len(r.ix.Songs), "in_progress", len(r.progress), "took", r.took.Round(time.Millisecond))
+				}
+				if r.history != nil {
+					a.history = r.history
 				}
 				a.showHome(r.progress)
 			}
@@ -816,23 +843,54 @@ func (a *App) showHome(progress []resume.Progress) {
 	if a.ix == nil {
 		return
 	}
-	var rows []fixture.Row
-	if row, ok := home.ContinueRow(progress, a.ix, a.resumeAlbum, a.queueAlbum); ok {
-		rows = append(rows, row)
+	var setting string
+	if a.opts.Prefs != nil {
+		setting = a.opts.Prefs.String(keys.HomeBlocks)
 	}
-	if a.opts.Spotify != nil {
-		var imp func(spotify.Playlist)
-		if a.env.Import != nil {
-			imp = a.importPlaylist
+	now := time.Now()
+	var rows []fixture.Row
+	for _, b := range home.Blocks(setting) {
+		if !b.On {
+			continue
 		}
-		if row, ok := home.SpotifyRow(a.playlists, a.openPlaylist, imp); ok {
+		var row fixture.Row
+		ok := false
+		switch b.ID {
+		case home.BlockContinue:
+			row, ok = home.ContinueRow(progress, a.ix, a.resumeAlbum, a.queueAlbum)
+		case home.BlockAdded:
+			row, ok = home.AlbumRow(a.ix.Recent, a.playAlbum, a.queueAlbum)
+		case home.BlockRandom:
+			row, ok = home.RandomRow(a.ix, rand.New(rand.NewPCG(a.homeDraw, 0x9e3779b9)), a.playAlbum, a.queueAlbum)
+		case home.BlockSpotify:
+			if a.opts.Spotify != nil {
+				var imp func(spotify.Playlist)
+				if a.env.Import != nil {
+					imp = a.importPlaylist
+				}
+				row, ok = home.SpotifyRow(a.playlists, a.openPlaylist, imp)
+			}
+		default:
+			row, ok = home.HistoryRow(b.ID, a.history, a.ix, now, a.playAlbum, a.queueAlbum)
+		}
+		if ok {
 			rows = append(rows, row)
 		}
 	}
-	if row, ok := home.AlbumRow(a.ix.Recent, a.playAlbum, a.queueAlbum); ok {
-		rows = append(rows, row)
-	}
 	a.home.SetRows(rows)
+}
+
+// homeAgain draws Random albums afresh each time Home is gone back to, not
+// while it is looked at.
+func (a *App) homeAgain() {
+	if a.shell.tab == a.lastTab {
+		return
+	}
+	a.lastTab = a.shell.tab
+	if a.shell.tab == 0 {
+		a.homeDraw++
+		a.showHome(a.progress)
+	}
 }
 
 func (a *App) playAlbum(al *library.Album) { playAlbum(a.opts.Player, al, 0, 0) }
@@ -1087,6 +1145,7 @@ func (a *App) dispatch(e input.Event) {
 	}
 	if a.shell.handle(e, now) {
 		a.dirty = true
+		a.homeAgain()
 	}
 }
 

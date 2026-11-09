@@ -3,6 +3,7 @@ package app
 import (
 	"time"
 
+	"github.com/ujjwal313/boombrick/internal/history"
 	"github.com/ujjwal313/boombrick/internal/library"
 	"github.com/ujjwal313/boombrick/internal/resume"
 )
@@ -18,7 +19,8 @@ type ScanUpdate struct {
 type loaded struct {
 	ix       *library.Index
 	progress []resume.Progress
-	final    bool // a scan had ended when the read began
+	history  *history.History // nil without a history to read
+	final    bool             // a scan had ended when the read began
 	took     time.Duration
 	err      error
 }
@@ -29,6 +31,7 @@ type loaded struct {
 type loader struct {
 	index    func() (*library.Index, error)
 	progress func() ([]resume.Progress, error)
+	history  func() (*history.History, error) // read with the progress; nil for none
 	wake     func()
 	results  chan loaded
 
@@ -59,6 +62,9 @@ func (l *loader) start(index, final bool) {
 		}
 		if r.err == nil {
 			r.progress, r.err = l.progress()
+		}
+		if r.err == nil && l.history != nil {
+			r.history, r.err = l.history()
 		}
 		r.took = time.Since(begin)
 		l.results <- r

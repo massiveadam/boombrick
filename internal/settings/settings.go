@@ -21,6 +21,9 @@ const (
 	// seconds, "0" never; DimLevel the brightness it dims to (the RG SP's).
 	DimAfter = "display.dim_after"
 	DimLevel = "display.dim_level"
+	// HomeBlocks is Home's blocks in order, "!" before one switched off
+	// (home.Blocks); "" is Home's own order, all on.
+	HomeBlocks = "home.blocks"
 )
 
 // Defaults holds the value used for a key that has never been set.
@@ -31,6 +34,7 @@ var Defaults = map[string]string{
 	VolumeLevelling:  "true",
 	DimAfter:         "30",
 	DimLevel:         "2",
+	HomeBlocks:       "",
 }
 
 // Settings keeps the table in memory and writes changes behind the caller.

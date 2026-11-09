@@ -24,6 +24,7 @@ import (
 	"github.com/ujjwal313/boombrick/internal/download"
 	"github.com/ujjwal313/boombrick/internal/features"
 	"github.com/ujjwal313/boombrick/internal/fonts"
+	"github.com/ujjwal313/boombrick/internal/history"
 	"github.com/ujjwal313/boombrick/internal/importer"
 	"github.com/ujjwal313/boombrick/internal/library"
 	"github.com/ujjwal313/boombrick/internal/logx"
@@ -425,9 +426,23 @@ func run(started time.Time) error {
 		MusicDir:   paths.Music,
 		Load:       func() (*library.Index, error) { return library.Load(db.DB) },
 		Progress:   func() ([]resume.Progress, error) { return resume.Recent(db.DB, 8) },
-		Rescan:     rescan,
-		Scanned:    scanned,
-		Saved:      savedTrack,
+		History:    func() (*history.History, error) { return history.Load(db.DB, time.Now()) },
+		// A Last.fm history left in the data folder is taken in once the
+		// library is scanned, to match its plays to the files.
+		AfterScan: func() bool {
+			taken, unmatched, err := scrobble.ImportHistory(db.DB, paths.Data)
+			if err != nil {
+				log.Warn("take in the Last.fm history", "err", err)
+				return false
+			}
+			if taken+unmatched > 0 {
+				log.Info("took in the Last.fm history", "plays", taken, "no_file", unmatched)
+			}
+			return taken > 0
+		},
+		Rescan:  rescan,
+		Scanned: scanned,
+		Saved:   savedTrack,
 		Status: func() platform.Status {
 			st := platform.ReadStatus("/sys")
 			st.Bluetooth = bt.Connected()

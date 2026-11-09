@@ -68,6 +68,7 @@ type Options struct {
 	Spotify      Account    // nil: no Streaming quality, nor the Accounts card
 	Copies       bool       // importing exists: Prefer downloaded copies is shown
 	Dimming      bool       // the screen can dim while music plays: Dim after and Dim level are shown
+	HomeChanged  func()     // Home's blocks changed: Home is made again; nil, no Home page
 }
 
 // What focus moves between, top to bottom: the rows, then the cards' pills.
@@ -76,6 +77,7 @@ const (
 	rowQuality
 	rowPrefer
 	rowStorage
+	rowHome
 	rowSleep
 	rowLevelling
 	rowDimAfter
@@ -139,29 +141,30 @@ var streams = []choice{
 
 // Screen is Settings.
 type Screen struct {
-	opts    Options
-	storage *storagePage // non-nil while the Storage page is shown
-	dialog  *confirm     // Update ready, while it is open
-	focus   int
-	k       [itemCount]anim.Value
-	open    int // the row expanded into its options, or -1
-	scroll  anim.Value
-	rows    [rowCount]widgets.Setting
-	stream  int // Streaming quality's choice, as last read
-	quality int // and Download quality's
-	sleeps  []choice
-	sleep   player.Sleep // the timer as its row last showed it
-	sleptAt time.Time    // and when
-	card    [3]int64     // the SD card's numbers the storage row was written for
-	footer  string
-	tool    card
-	toolFor toolState // what the Downloader card was written for
-	app     card
-	appFor  appState // and the Boombrick card
-	staging bool     // an update was being staged when the card was written
-	account card
-	acctFor spotify.Status // what the Spotify card was written for
-	hints   map[hintKey][]widgets.Hint
+	opts     Options
+	storage  *storagePage // non-nil while the Storage page is shown
+	homePage *homePage    // and the Home page
+	dialog   *confirm     // Update ready, while it is open
+	focus    int
+	k        [itemCount]anim.Value
+	open     int // the row expanded into its options, or -1
+	scroll   anim.Value
+	rows     [rowCount]widgets.Setting
+	stream   int // Streaming quality's choice, as last read
+	quality  int // and Download quality's
+	sleeps   []choice
+	sleep    player.Sleep // the timer as its row last showed it
+	sleptAt  time.Time    // and when
+	card     [3]int64     // the SD card's numbers the storage row was written for
+	footer   string
+	tool     card
+	toolFor  toolState // what the Downloader card was written for
+	app      card
+	appFor   appState // and the Boombrick card
+	staging  bool     // an update was being staged when the card was written
+	account  card
+	acctFor  spotify.Status // what the Spotify card was written for
+	hints    map[hintKey][]widgets.Hint
 }
 
 type hintKey struct {
@@ -177,6 +180,7 @@ func New(opts Options) *Screen {
 		rowQuality:   {Icon: "download", Label: "Download quality"},
 		rowPrefer:    {Icon: "circlecheck", Label: "Prefer downloaded copies"},
 		rowStorage:   {Icon: "sd", Label: "Storage", Chevron: true},
+		rowHome:      {Icon: "home", Label: "Home", Chevron: true},
 		rowSleep:     {Icon: "moon", Label: "Sleep timer"},
 		rowLevelling: {Icon: "sliders", Label: "Volume levelling"},
 		rowDimAfter:  {Icon: "sun", Label: "Dim after"},
@@ -203,7 +207,7 @@ func (s *Screen) Opened() {
 // reset puts the screen on the main page, focus on the first row shown,
 // nothing expanded.
 func (s *Screen) reset() {
-	s.storage, s.open, s.focus = nil, -1, 0
+	s.storage, s.homePage, s.open, s.focus = nil, nil, -1, 0
 	for !s.shown(s.focus) {
 		s.focus++
 	}
@@ -248,6 +252,8 @@ func (s *Screen) shown(item int) bool {
 		return s.opts.Copies
 	case rowStorage:
 		return s.opts.Space != nil
+	case rowHome:
+		return s.opts.HomeChanged != nil
 	case rowDimAfter, rowDimLevel:
 		return s.opts.Dimming
 	case pillTool:
@@ -269,6 +275,9 @@ func (s *Screen) ShowsDownloads() bool { return s.opts.Downloader != nil }
 func (s *Screen) Handle(ev input.Event, now time.Time) bool {
 	if s.storage != nil {
 		return s.storage.handle(s, ev, now)
+	}
+	if s.homePage != nil {
+		return s.homePage.handle(s, ev, now)
 	}
 	if s.dialog != nil {
 		if s.dialog.handle(ev, now) && s.dialog.confirmed && s.opts.Quit != nil {
@@ -328,6 +337,8 @@ func (s *Screen) act(now time.Time) bool {
 		}
 	case rowStorage:
 		s.storage = newStoragePage(s.opts.Space, now)
+	case rowHome:
+		s.homePage = newHomePage(s)
 	case rowLevelling:
 		on := !s.opts.Prefs.Bool(keys.VolumeLevelling)
 		s.opts.Prefs.SetBool(keys.VolumeLevelling, on)
@@ -427,6 +438,8 @@ func (s *Screen) Back() bool {
 	switch {
 	case s.storage != nil:
 		return s.storage.back(s, time.Now())
+	case s.homePage != nil:
+		return s.homePage.back(s)
 	case s.dialog != nil:
 		s.dialog.close(time.Now())
 		return true
@@ -449,6 +462,9 @@ func (s *Screen) Claims(b input.Button) bool {
 func (s *Screen) Animating(now time.Time) bool {
 	if s.storage != nil {
 		return s.storage.animating(now)
+	}
+	if s.homePage != nil {
+		return s.homePage.animating(now)
 	}
 	if !s.scroll.Done(now) || s.dialog != nil && s.dialog.animating(now) {
 		return true
@@ -478,6 +494,10 @@ func (s *Screen) Draw(u *ui.Context) {
 	widgets.DrawBackground(u, widgets.FlatGround)
 	if s.storage != nil {
 		s.storage.draw(s, u)
+		return
+	}
+	if s.homePage != nil {
+		s.homePage.draw(s, u)
 		return
 	}
 	s.refresh(u.Now)
@@ -740,7 +760,7 @@ func (s *Screen) hint() []widgets.Hint {
 	switch {
 	case k.open:
 		h = []widgets.Hint{{Key: "◀ ▶", Label: "Choose"}, {Key: "A", Label: "Done"}}
-	case k.item == rowStorage:
+	case k.item == rowStorage, k.item == rowHome:
 		h = []widgets.Hint{{Key: "A", Label: "Open"}, {Key: "B", Label: "Back"}}
 	case k.item == rowLevelling, k.item == rowPrefer:
 		h = []widgets.Hint{{Key: "A", Label: "Switch"}, {Key: "B", Label: "Back"}}
