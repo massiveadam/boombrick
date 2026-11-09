@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/ujjwal313/boombrick/internal/audio/route"
 	"github.com/ujjwal313/boombrick/internal/platform"
@@ -18,18 +19,20 @@ import (
 var outputs *outputChoice
 
 type outputChoice struct {
-	path  string
-	state func() route.State // what is connected, without the choice
+	path   string
+	state  func() route.State // what is connected, without the choice
+	chosen atomic.Uint32      // the choice, read from path once and kept here
 }
 
 func newOutputChoice(data string) *outputChoice {
-	return &outputChoice{path: filepath.Join(data, "output.txt"),
+	o := &outputChoice{path: filepath.Join(data, "output.txt"),
 		state: func() route.State { return platform.AudioState("/") }}
+	o.chosen.Store(uint32(o.load()))
+	return o
 }
 
-// choice is the choice saved, Auto when there is none. Read each time it is
-// asked, which the router does twice a second: a few bytes.
-func (o *outputChoice) choice() route.Choice {
+// load is the choice saved, Auto when there is none.
+func (o *outputChoice) load() route.Choice {
 	b, err := os.ReadFile(o.path)
 	if err != nil {
 		return route.Auto
@@ -40,6 +43,10 @@ func (o *outputChoice) choice() route.Choice {
 	}
 	return route.Choice(n)
 }
+
+// choice is the choice, from memory: the router asks twice a second from the
+// thread that feeds the sound, which must never wait on the card.
+func (o *outputChoice) choice() route.Choice { return route.Choice(o.chosen.Load()) }
 
 // State is what is connected, with the choice: the router's state.
 func (o *outputChoice) State() route.State {
@@ -73,5 +80,6 @@ func (o *outputChoice) Step(step int) {
 		i = 0
 	}
 	next := have[((i+step)%len(have)+len(have))%len(have)]
-	_ = os.WriteFile(o.path, []byte(strconv.Itoa(int(next))+"\n"), 0o644)
+	o.chosen.Store(uint32(next))
+	_ = os.WriteFile(o.path, []byte(strconv.Itoa(int(next))+"\n"), 0o644) // for the background player
 }

@@ -9,6 +9,13 @@ import (
 func TestOutputChoice(t *testing.T) {
 	st := route.State{Bluetooth: "bt_AA"}
 	o := &outputChoice{path: t.TempDir() + "/output.txt", state: func() route.State { return st }}
+	defer func() {
+		// Saved for the background player, which reads it as it starts.
+		o2 := &outputChoice{path: o.path}
+		if o2.load() != o.choice() {
+			t.Errorf("saved %v, chosen %v", o2.load(), o.choice())
+		}
+	}()
 	if got := o.Label(); got != "Auto · Bluetooth" {
 		t.Fatalf("auto: %q", got)
 	}
