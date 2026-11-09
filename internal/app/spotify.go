@@ -10,8 +10,11 @@ import (
 	"github.com/ujjwal313/boombrick/internal/spotify"
 )
 
-// spotifyTab is the Spotify tab's place in the tab row.
-const spotifyTab = 2
+// The Library's and the Spotify tab's places in the tab row.
+const (
+	libraryTab = 1
+	spotifyTab = 2
+)
 
 // Spotify is the Spotify library: the tab's, Home's row's and Settings'.
 // *spotify.Library is one.

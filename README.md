@@ -69,6 +69,7 @@ The Downloader card updates yt-dlp, which YouTube Music downloads use, the same 
 | L2, R2 | Filters in the Library and YouTube Music; on Now Playing and Lyrics, 10 s back and on, or hold to rewind and fast-forward |
 | Start | Now Playing |
 | Select | The album playing |
+| X twice | Search the library, from anywhere |
 | X and A together | Rescan the library |
 | Menu | Quick menu: sleep timer, equalizer, output, album order, rescan the library, screen off, play in background, Settings, quit |
 | Power | Screen off and on; hold for a second to power off |

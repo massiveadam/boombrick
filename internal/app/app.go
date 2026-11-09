@@ -308,6 +308,10 @@ type App struct {
 	chordBtn  input.Button
 	chorded   bool
 	chordWait time.Duration // 0: A and X go straight to the screens
+	// doubleWait is how long X waits for a second X; chordUp that the X
+	// waiting was let go meanwhile.
+	doubleWait time.Duration
+	chordUp    bool
 	// browsing is the player as the Library and album pages have it: playing
 	// opens Now Playing.
 	browsing  showsPlaying
@@ -395,6 +399,7 @@ func New(opts Options) (*App, error) {
 
 	a := &App{
 		chordWait:  chordWait,
+		doubleWait: doubleWait,
 		opts:       opts,
 		window:     win,
 		renderer:   r,
@@ -1055,7 +1060,7 @@ func (a *App) timeout(start, now time.Time) time.Duration {
 		timeout = min(timeout, a.yAt.Add(yHold).Sub(now)) // held that long, it opens the Queue
 	}
 	if !a.chordAt.IsZero() {
-		timeout = min(timeout, a.chordAt.Add(a.chordWait).Sub(now)) // then it's A or X alone
+		timeout = min(timeout, a.chordDue().Sub(now)) // then it's A or X alone
 	}
 	if a.dark {
 		return max(timeout, 0) // nothing shows, so nothing ticks
@@ -1213,7 +1218,7 @@ func (a *App) dispatch(e input.Event) {
 			return
 		}
 	} else if e.Kind == input.Press {
-		a.chordHeld(now.Add(a.chordWait)) // another button: the A or X waiting comes first
+		a.chordFlush(now) // another button: the A or X waiting comes first
 	}
 	if e.Button == input.Y && a.holdY(e, now) {
 		return
@@ -1377,10 +1382,12 @@ const yHold = 800 * time.Millisecond
 // together from either alone: too short to feel.
 const chordWait = 80 * time.Millisecond
 
-// chord handles A and X: either is held back chordWait for the other, and
-// the two together rescan the library. It reports whether it kept e from the
-// screens. Where a dialog claims the button, or with the screen off, they
-// are the screen's at once.
+// chord handles A and X. Either is held back chordWait for the other, and
+// the two together rescan the library; X is held back doubleWait in case
+// another X follows, and twice opens the Library's search. It reports whether
+// it kept e from the screens. Where a dialog claims the button, on the search
+// itself (X types a space there), or with the screen off, they are the
+// screen's at once.
 func (a *App) chord(e input.Event, now time.Time) bool {
 	if a.dark || a.handing.Load() || a.chordWait == 0 {
 		return false
@@ -1388,22 +1395,30 @@ func (a *App) chord(e input.Event, now time.Time) bool {
 	if c, ok := a.shell.active().(screens.Claimer); ok && c.Claims(e.Button) {
 		return false
 	}
+	if _, ok := a.shell.active().(*browse.Search); ok && a.chordAt.IsZero() && !a.chorded {
+		return false
+	}
 	other := input.X
 	if e.Button == input.X {
 		other = input.A
 	}
+	pending := !a.chordAt.IsZero()
 	switch e.Kind {
 	case input.Press:
-		if !a.chordAt.IsZero() && a.chordBtn == other {
-			a.chordAt, a.chorded = time.Time{}, true
+		switch {
+		case pending && a.chordBtn == other:
+			a.chordAt, a.chordUp, a.chorded = time.Time{}, false, true
 			a.rescanNow()
 			return true
-		}
-		if a.chorded {
+		case pending && a.chordBtn == input.X && e.Button == input.X:
+			a.chordAt, a.chordUp, a.chorded = time.Time{}, false, true
+			a.openSearch(now)
+			return true
+		case a.chorded:
 			return true
 		}
-		a.chordHeld(now.Add(a.chordWait)) // a different one waiting: it goes first
-		a.chordAt, a.chordBtn = now, e.Button
+		a.chordFlush(now) // a different one waiting: it goes first
+		a.chordAt, a.chordBtn, a.chordUp = now, e.Button, false
 		return true
 	case input.Release:
 		if a.chorded {
@@ -1412,25 +1427,70 @@ func (a *App) chord(e input.Event, now time.Time) bool {
 			}
 			return true
 		}
-		if !a.chordAt.IsZero() && a.chordBtn == e.Button {
-			a.chordHeld(now.Add(a.chordWait)) // a quick tap: the press, then this release
+		if pending && a.chordBtn == e.Button {
+			if e.Button == input.X && a.doubleWait > 0 {
+				a.chordUp = true // a tap: press and release both go once the wait is over
+				return true
+			}
+			a.chordFlush(now) // let go: the press, then this release
 		}
 		return false
 	}
-	return a.chorded || !a.chordAt.IsZero() && a.chordBtn == e.Button // repeats wait too
+	return a.chorded || pending && a.chordBtn == e.Button // repeats wait too
 }
 
-// chordHeld gives the screens the A or X press waiting, once chordWait has
-// passed at now.
+// doubleWait is how long X waits for a second X: two within it open the
+// search.
+const doubleWait = 250 * time.Millisecond
+
+// chordDue is when the A or X waiting goes to the screens.
+func (a *App) chordDue() time.Time {
+	if a.chordBtn == input.X && a.doubleWait > 0 {
+		return a.chordAt.Add(a.doubleWait)
+	}
+	return a.chordAt.Add(a.chordWait)
+}
+
+// chordHeld gives the screens the A or X waiting, once its wait has passed
+// at now.
 func (a *App) chordHeld(now time.Time) {
-	if a.chordAt.IsZero() || now.Sub(a.chordAt) < a.chordWait {
+	if a.chordAt.IsZero() || now.Before(a.chordDue()) {
 		return
 	}
-	a.chordAt = time.Time{}
-	if a.shell.handle(input.Event{Button: a.chordBtn, Kind: input.Press}, now) {
+	a.chordFlush(now)
+}
+
+// chordFlush gives the screens the A or X waiting now, with its release when
+// it was let go meanwhile.
+func (a *App) chordFlush(now time.Time) {
+	if a.chordAt.IsZero() {
+		return
+	}
+	b, up := a.chordBtn, a.chordUp
+	a.chordAt, a.chordUp = time.Time{}, false
+	changed := a.shell.handle(input.Event{Button: b, Kind: input.Press}, now)
+	if up {
+		changed = a.shell.handle(input.Event{Button: b, Kind: input.Release}, now) || changed
+	}
+	if changed {
 		a.dirty = true
 		a.homeAgain()
 	}
+}
+
+// openSearch opens the Library's search over everything: on X pressed twice.
+func (a *App) openSearch(now time.Time) {
+	if a.ix == nil {
+		return
+	}
+	if a.shell.open >= 0 {
+		a.shell.closeOverlay(now)
+	}
+	if a.shell.tab != libraryTab {
+		a.shell.tab, a.shell.leaving = libraryTab, nil
+		a.shell.trans.Set(1)
+	}
+	a.Push(browse.NewSearch(a, a.browsing, a.ix))
 }
 
 // holdY keeps Y from the screens while it is down, and reports whether it
