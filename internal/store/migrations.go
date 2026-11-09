@@ -152,6 +152,21 @@ var migrations = []string{
 	// as each stored time is now a second off. The sizes stay right for the
 	// Downloads tab while the scan runs, and Recent keeps its order.
 	`UPDATE tracks SET mtime = mtime + 1`,
+	// Plays for Last.fm (internal/scrobble): what was heard and when it
+	// started. Kept a while once sent, so the same play isn't sent twice when
+	// the app and the background player both see it.
+	`CREATE TABLE scrobbles (
+		id           INTEGER PRIMARY KEY,
+		item         TEXT NOT NULL,
+		artist       TEXT NOT NULL,
+		title        TEXT NOT NULL,
+		album        TEXT NOT NULL DEFAULT '',
+		album_artist TEXT NOT NULL DEFAULT '',
+		duration     INTEGER NOT NULL DEFAULT 0,
+		started      INTEGER NOT NULL,
+		sent         INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX scrobbles_item ON scrobbles(item, started)`,
 }
 
 func migrate(db *sql.DB) error {
