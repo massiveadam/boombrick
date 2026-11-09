@@ -18,6 +18,7 @@ func TestControllersAreReadByTheirMapping(t *testing.T) {
 	a.pads = map[sdl.JoystickID]map[uint8]bool{7: {4: true, 5: true}}
 	for _, ev := range []sdl.Event{
 		&sdl.ControllerButtonEvent{Type: sdl.CONTROLLERBUTTONDOWN, Which: 7, Button: sdl.CONTROLLER_BUTTON_B, State: sdl.PRESSED},
+		&sdl.ControllerButtonEvent{Type: sdl.CONTROLLERBUTTONUP, Which: 7, Button: sdl.CONTROLLER_BUTTON_B, State: sdl.RELEASED}, // not held: X with A rescans
 		&sdl.JoyButtonEvent{Type: sdl.JOYBUTTONDOWN, Which: 7, Button: 5, State: sdl.PRESSED},
 		&sdl.JoyHatEvent{Type: sdl.JOYHATMOTION, Which: 7, Value: sdl.HAT_UP},
 		&sdl.ControllerAxisEvent{Type: sdl.CONTROLLERAXISMOTION, Which: 7, Axis: sdl.CONTROLLER_AXIS_TRIGGERLEFT, Value: 32767},
@@ -25,7 +26,7 @@ func TestControllersAreReadByTheirMapping(t *testing.T) {
 	} {
 		a.event(ev)
 	}
-	if want := []input.Button{input.A, input.L2, input.X}; !slices.Equal(tab.got, want) {
+	if want := []input.Button{input.A, input.A, input.L2, input.X}; !slices.Equal(tab.got, want) { // A down and up
 		t.Fatalf("the screen heard %v, want %v", tab.got, want)
 	}
 }

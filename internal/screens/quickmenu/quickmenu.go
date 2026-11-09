@@ -36,6 +36,9 @@ type Actions struct {
 	// the row never shows.
 	Output     func() string
 	StepOutput func(step int)
+	// Rescan looks for music added to or removed from the card; without it
+	// the row never shows.
+	Rescan func()
 }
 
 // The rows, top to bottom.
@@ -43,6 +46,7 @@ const (
 	rowSleep = iota
 	rowEQ
 	rowOutput
+	rowRescan
 	rowScreen
 	rowBackground
 	rowSettings
@@ -81,6 +85,7 @@ func New(act Actions) *Menu {
 		rowSleep:      {Icon: "moon", Label: "Sleep timer"},
 		rowEQ:         {Icon: "sliders", Label: "Equalizer", Chevron: true},
 		rowOutput:     {Icon: "volume", Label: "Output"},
+		rowRescan:     {Icon: "refresh", Label: "Rescan library"},
 		rowScreen:     {Icon: "power", Label: "Screen off"},
 		rowBackground: {Icon: "music", Label: "Play in background"},
 		rowSettings:   {Icon: "settings", Label: "Settings", Chevron: true},
@@ -90,6 +95,7 @@ func New(act Actions) *Menu {
 		rowSleep:      {{Key: "◀ ▶", Label: "Change"}, {Key: "B", Label: "Close"}},
 		rowEQ:         {{Key: "A", Label: "Open"}, {Key: "B", Label: "Close"}},
 		rowOutput:     {{Key: "◀ ▶", Label: "Change"}, {Key: "B", Label: "Close"}},
+		rowRescan:     {{Key: "A", Label: "Rescan"}, {Key: "B", Label: "Close"}},
 		rowScreen:     {{Key: "A", Label: "Turn off"}, {Key: "B", Label: "Close"}},
 		rowBackground: {{Key: "A", Label: "Play in background"}, {Key: "B", Label: "Close"}},
 		rowSettings:   {{Key: "A", Label: "Open"}, {Key: "B", Label: "Close"}},
@@ -105,6 +111,7 @@ func (m *Menu) Open(now time.Time) {
 		switch {
 		case r == rowBackground && (m.act.PlayInBackground == nil || m.act.Playing == nil || !m.act.Playing()):
 		case r == rowEQ && m.act.OpenEQ == nil:
+		case r == rowRescan && m.act.Rescan == nil:
 		case r == rowOutput && (m.act.Output == nil || m.act.StepOutput == nil):
 		default:
 			m.visible = append(m.visible, r)
@@ -193,6 +200,9 @@ func (m *Menu) do(now time.Time) {
 		m.act.OpenEQ()
 	case rowOutput:
 		m.act.StepOutput(1)
+	case rowRescan:
+		m.close(now)
+		m.act.Rescan()
 	case rowScreen:
 		m.close(now)
 		m.act.ScreenOff()

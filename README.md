@@ -61,15 +61,16 @@ The Downloader card updates yt-dlp, which YouTube Music downloads use, the same 
 | Button | Action |
 |---|---|
 | D-pad | Move |
-| A | Play or open |
+| A | Play or open; on Home, open the album |
 | B | Back |
-| X | Download (YouTube Music); shuffle an artist or a genre (Library) |
-| Y | Add to the queue; on Now Playing, lyrics |
+| X | Download (YouTube Music); shuffle an artist or a genre (Library); on Home, play the album |
+| Y | Add to the queue; on Now Playing, lyrics. Hold for 2 s: the queue |
 | L1, R1 | Switch tabs; on Now Playing, previous and next track |
 | L2, R2 | Filters in the Library and YouTube Music; on Now Playing and Lyrics, 10 s back and on, or hold to rewind and fast-forward |
 | Start | Now Playing |
-| Select | Queue |
-| Menu | Quick menu: sleep timer, screen off, play in background, Settings, quit |
+| Select | The album playing |
+| X and A together | Rescan the library |
+| Menu | Quick menu: sleep timer, equalizer, output, rescan the library, screen off, play in background, Settings, quit |
 | Power | Screen off and on; hold for a second to power off |
 
 With the screen off, L1 and R1 skip back and on, and A plays or pauses. Each screen shows its buttons along the bottom.

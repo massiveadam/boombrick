@@ -32,6 +32,9 @@ type overlay struct {
 	button input.Button
 	screen screens.Screen
 	can    func() bool // whether it may open now; nil means always
+	// act, when set, is what button does instead of opening screen (nil):
+	// a button of the shell's that opens something else.
+	act func(now time.Time)
 }
 
 // shell routes input and drawing between each tab's stack of pages and the
@@ -207,6 +210,8 @@ func (s *shell) handle(e input.Event, now time.Time) bool {
 				continue
 			}
 			switch {
+			case o.act != nil:
+				o.act(now)
 			case s.open == i:
 				s.closeOverlay(now)
 			case o.can == nil || o.can():

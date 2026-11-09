@@ -175,3 +175,28 @@ func TestDueWhileATimerRuns(t *testing.T) {
 		t.Fatalf("Due = %v, %v", due.Sub(t0), ok)
 	}
 }
+
+func TestRescanRow(t *testing.T) {
+	a := &acts{}
+	m := New(a.actions())
+	m.Open(t0)
+	for _, r := range m.visible {
+		if r == rowRescan {
+			t.Fatal("Rescan library shown without a rescan to do")
+		}
+	}
+	rescans := 0
+	act := a.actions()
+	act.Rescan = func() { rescans++ }
+	m = New(act)
+	m.Open(t0)
+	for m.focus != rowRescan {
+		if !m.Handle(press(input.Down), t0) {
+			t.Fatal("no Rescan library row")
+		}
+	}
+	m.Handle(press(input.A), t0)
+	if rescans != 1 || m.IsOpen() {
+		t.Fatalf("rescans %d, open %v", rescans, m.IsOpen())
+	}
+}

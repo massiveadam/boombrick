@@ -297,8 +297,12 @@ type App struct {
 	dimmed     bool      // the light is down to its dimmest (DimAfter)
 	dimBlack   bool      // and the picture black: Dim level's Black
 	powerAt    time.Time // when Power went down, while it is held
-	scanEnded  bool      // a scan has ended, so an empty index is the library
-	wasAnim    bool
+	// yAt is when Y went down, while it is held and kept from the screens: let
+	// go before yHold it is theirs (a tap), held that long it opens the Queue.
+	yAt       time.Time
+	queueAt   int  // the Queue overlay's index
+	scanEnded bool // a scan has ended, so an empty index is the library
+	wasAnim   bool
 	// Spotify: the session-expired dialog, whether it has opened since the
 	// last sign-in, the playlists Home's row was made from, and the albums in
 	// progress Home was last given.
@@ -478,7 +482,8 @@ func New(opts Options) (*App, error) {
 	if a.expired != nil {
 		a.shell.alert = a.expired
 	}
-	addOverlays(a.shell, a.nowPlaying, a.queue, func() bool { return a.last.Queued }, opts.Player, opts.Lyrics, a.held)
+	a.queueAt = addOverlays(a.shell, a.nowPlaying, a.queue, func() bool { return a.last.Queued }, opts.Player, opts.Lyrics, a.held)
+	a.shell.add(overlay{button: input.Select, act: a.openPlayingAlbum})
 	if opts.Lyrics != nil {
 		a.forward(opts.Lyrics.Ready(), &a.redraw)
 	}
@@ -499,6 +504,9 @@ func (a *App) quickMenu() *quickmenu.Menu {
 	act := quickmenu.Actions{Sleep: a.opts.Player.Sleep, SetSleep: a.opts.Player.SetSleep,
 		ScreenOff: func() { a.setDark(true) }, OpenSettings: func() {}, Quit: func() { a.quit = true }}
 	act.Playing = func() bool { return a.last.Playing }
+	if a.opts.Rescan != nil {
+		act.Rescan = a.rescanNow
+	}
 	if a.opts.Background != nil {
 		act.PlayInBackground = a.playInBackground
 	}
@@ -567,13 +575,14 @@ func (a *App) forward(ready <-chan struct{}, flag *atomic.Bool) {
 }
 
 // addOverlays puts the screens that open over the tabs on s: Now Playing on
-// Start, when queued allows, the Queue on Select and, given lyrics, the Lyrics
-// screen, which opens from Now Playing and goes back to it, having no button
-// of its own. held tells Now Playing and Lyrics which buttons are down.
+// Start, when queued allows, the Queue, opened by holding Y (it returns its
+// index), and, given lyrics, the Lyrics screen, which opens from Now Playing
+// and goes back to it, having no button of its own. held tells Now Playing
+// and Lyrics which buttons are down.
 func addOverlays(s *shell, np *nowplaying.NowPlaying, q screens.Screen, queued func() bool, p lyricsscreen.Player, lyrics lyricsscreen.Source,
-	held func(input.Button) bool) {
+	held func(input.Button) bool) (queueAt int) {
 	nowPlayingAt := s.add(overlay{button: input.Start, screen: np, can: queued})
-	s.add(overlay{button: input.Select, screen: q})
+	queueAt = s.add(overlay{button: input.None, screen: q})
 	np.SetHeld(held)
 	if lyrics == nil {
 		return
@@ -582,6 +591,7 @@ func addOverlays(s *shell, np *nowplaying.NowPlaying, q screens.Screen, queued f
 	ly.SetHeld(held)
 	lyricsAt := s.add(overlay{button: input.None, screen: ly})
 	np.SetLyrics(func() { s.openOverlay(lyricsAt, time.Now()) })
+	return queueAt
 }
 
 // Push opens s on the current tab.
@@ -642,6 +652,7 @@ func (a *App) Run() error {
 		if a.powerHeld(now) {
 			continue // powering off
 		}
+		a.yHeld(now)
 		a.poll()
 		a.dimIdle(now)
 		if a.dimmed && a.dimBlack {
@@ -918,6 +929,13 @@ func (a *App) queueAlbum(al *library.Album) {
 	a.Toast(screens.AddedToQueue)
 }
 
+// rescanNow rescans and says so: from the quick menu, or X and A together.
+func (a *App) rescanNow() {
+	a.rescan()
+	a.Toast(screens.Scanning)
+	a.dirty = true
+}
+
 func (a *App) rescan() {
 	if a.opts.Rescan != nil {
 		a.opts.Rescan()
@@ -980,6 +998,9 @@ func (a *App) timeout(start, now time.Time) time.Duration {
 	timeout := start.Truncate(time.Minute).Add(time.Minute).Sub(now)
 	if !a.powerAt.IsZero() {
 		timeout = min(timeout, a.powerAt.Add(powerHold).Sub(now)) // held that long, it powers off
+	}
+	if !a.yAt.IsZero() {
+		timeout = min(timeout, a.yAt.Add(yHold).Sub(now)) // held that long, it opens the Queue
 	}
 	if a.dark {
 		return max(timeout, 0) // nothing shows, so nothing ticks
@@ -1132,8 +1153,15 @@ func (a *App) dispatch(e input.Event) {
 	if a.handing.Load() {
 		return // the music is being handed over
 	}
+	if e.Button == input.Y && a.holdY(e, now) {
+		return
+	}
 	if a.opts.QuitChord && a.held(input.Menu) && e.Button == input.Start && e.Kind == input.Press {
 		a.quit = true
+		return
+	}
+	if e.Kind == input.Press && !a.dark && (e.Button == input.A && a.held(input.X) || e.Button == input.X && a.held(input.A)) {
+		a.rescanNow() // X and A together, anywhere
 		return
 	}
 	if a.dark {
@@ -1281,6 +1309,64 @@ func (a *App) lightUp() {
 	if err := a.opts.Backlight.On(); err != nil {
 		a.opts.Log.Warn("turn the backlight on", "err", err)
 	}
+}
+
+// yHold is how long Y is held to open the Queue; a shorter press is the
+// screen's Y, as adding to the queue.
+const yHold = 2 * time.Second
+
+// holdY keeps Y from the screens while it is down, and reports whether it
+// did: let go before yHold, the screen hears the press and release then.
+// Where a dialog claims Y, or with the screen off, Y is the screen's at once.
+func (a *App) holdY(e input.Event, now time.Time) bool {
+	if a.dark || a.handing.Load() {
+		return false
+	}
+	if c, ok := a.shell.active().(screens.Claimer); ok && c.Claims(input.Y) {
+		return false
+	}
+	switch e.Kind {
+	case input.Press:
+		a.yAt = now
+		return true
+	case input.Release:
+		if a.yAt.IsZero() {
+			return true // held: the Queue opened instead
+		}
+		a.yAt = time.Time{}
+		if a.shell.handle(input.Event{Button: input.Y, Kind: input.Press}, now) {
+			a.dirty = true
+		}
+		return false // the release follows
+	}
+	return true // repeats: a hold isn't a run of taps
+}
+
+// yHeld opens the Queue once Y has been held for yHold at now.
+func (a *App) yHeld(now time.Time) {
+	if a.yAt.IsZero() || now.Sub(a.yAt) < yHold {
+		return
+	}
+	a.yAt = time.Time{}
+	a.shell.openOverlay(a.queueAt, now)
+	a.dirty = true
+}
+
+// openPlayingAlbum opens the page of the album playing, over whatever is open,
+// on Select.
+func (a *App) openPlayingAlbum(now time.Time) {
+	var al *library.Album
+	if a.ix != nil && a.last.Queued {
+		al = a.ix.AlbumOf(a.last.Track.Path)
+	}
+	if al == nil {
+		a.Toast("Nothing from the library is playing")
+		return
+	}
+	if a.shell.open >= 0 {
+		a.shell.closeOverlay(now)
+	}
+	a.Push(browse.NewAlbumPage(a, a.opts.Player, al))
 }
 
 // powerHeld powers off once Power has been held for powerHold at now, and
