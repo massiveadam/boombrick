@@ -299,8 +299,11 @@ type App struct {
 	powerAt    time.Time // when Power went down, while it is held
 	// yAt is when Y went down, while it is held and kept from the screens: let
 	// go before yHold it is theirs (a tap), held that long it opens the Queue.
-	yAt       time.Time
-	queueAt   int  // the Queue overlay's index
+	yAt                   time.Time
+	nowPlayingAt, queueAt int // the Now Playing and Queue overlays' indexes
+	// browsing is the player as the Library and album pages have it: playing
+	// opens Now Playing.
+	browsing  showsPlaying
 	scanEnded bool // a scan has ended, so an empty index is the library
 	wasAnim   bool
 	// Spotify: the session-expired dialog, whether it has opened since the
@@ -411,8 +414,9 @@ func New(opts Options) (*App, error) {
 		a.reader.Go(func() { watchStatus(opts.Status, statusEvery, a.statuses, a.wake, a.lit, a.stop) })
 	}
 	a.home.SetEmpty(opts.MusicDir, func() { a.rescan(); a.Toast(screens.Scanning) })
-	a.home.SetOpen(func(al *library.Album) { a.Push(browse.NewAlbumPage(a, opts.Player, al)) })
-	a.library = browse.New(a, opts.Player, opts.MusicDir, a.rescan)
+	a.browsing = showsPlaying{opts.Player, a.openNowPlaying}
+	a.home.SetOpen(func(al *library.Album) { a.Push(browse.NewAlbumPage(a, a.browsing, al)) })
+	a.library = browse.New(a, a.browsing, opts.MusicDir, a.rescan)
 	a.loads = newLoader(opts.Load, opts.Progress, a.wake)
 	a.loads.history = opts.History
 	a.homeDraw = uint64(time.Now().UnixNano()) // a new draw of Random albums each launch
@@ -482,7 +486,7 @@ func New(opts Options) (*App, error) {
 	if a.expired != nil {
 		a.shell.alert = a.expired
 	}
-	a.queueAt = addOverlays(a.shell, a.nowPlaying, a.queue, func() bool { return a.last.Queued }, opts.Player, opts.Lyrics, a.held)
+	a.nowPlayingAt, a.queueAt = addOverlays(a.shell, a.nowPlaying, a.queue, func() bool { return a.last.Queued }, opts.Player, opts.Lyrics, a.held)
 	a.shell.add(overlay{button: input.Select, act: a.openPlayingAlbum})
 	if opts.Lyrics != nil {
 		a.forward(opts.Lyrics.Ready(), &a.redraw)
@@ -580,18 +584,18 @@ func (a *App) forward(ready <-chan struct{}, flag *atomic.Bool) {
 // and goes back to it, having no button of its own. held tells Now Playing
 // and Lyrics which buttons are down.
 func addOverlays(s *shell, np *nowplaying.NowPlaying, q screens.Screen, queued func() bool, p lyricsscreen.Player, lyrics lyricsscreen.Source,
-	held func(input.Button) bool) (queueAt int) {
-	nowPlayingAt := s.add(overlay{button: input.Start, screen: np, can: queued})
+	held func(input.Button) bool) (nowPlayingAt, queueAt int) {
+	nowPlayingAt = s.add(overlay{button: input.Start, screen: np, can: queued})
 	queueAt = s.add(overlay{button: input.None, screen: q})
 	np.SetHeld(held)
 	if lyrics == nil {
-		return
+		return nowPlayingAt, queueAt
 	}
 	ly := lyricsscreen.New(p, lyrics, func() { s.openOverlay(nowPlayingAt, time.Now()) })
 	ly.SetHeld(held)
 	lyricsAt := s.add(overlay{button: input.None, screen: ly})
 	np.SetLyrics(func() { s.openOverlay(lyricsAt, time.Now()) })
-	return queueAt
+	return nowPlayingAt, queueAt
 }
 
 // Push opens s on the current tab.
@@ -905,10 +909,34 @@ func (a *App) homeAgain() {
 	}
 }
 
-func (a *App) playAlbum(al *library.Album) { playAlbum(a.opts.Player, al, 0, 0) }
+func (a *App) playAlbum(al *library.Album) {
+	playAlbum(a.opts.Player, al, 0, 0)
+	a.openNowPlaying()
+}
 
 func (a *App) resumeAlbum(al *library.Album, track int, frame int64) {
 	playAlbum(a.opts.Player, al, track, frame)
+	a.openNowPlaying()
+}
+
+// openNowPlaying shows Now Playing, as playing music chosen in the library
+// does: from Home, an album page or the Library.
+func (a *App) openNowPlaying() {
+	a.shell.openOverlay(a.nowPlayingAt, time.Now())
+	a.dirty = true
+}
+
+// showsPlaying is the player, whose Play then shows Now Playing.
+type showsPlaying struct {
+	*player.Player
+	show func()
+}
+
+func (p showsPlaying) Play(tracks []player.Track, start int) {
+	p.Player.Play(tracks, start)
+	if len(tracks) > 0 {
+		p.show()
+	}
 }
 
 // albumPlayer is what Home's albums need from the player.
@@ -1366,7 +1394,7 @@ func (a *App) openPlayingAlbum(now time.Time) {
 	if a.shell.open >= 0 {
 		a.shell.closeOverlay(now)
 	}
-	a.Push(browse.NewAlbumPage(a, a.opts.Player, al))
+	a.Push(browse.NewAlbumPage(a, a.browsing, al))
 }
 
 // powerHeld powers off once Power has been held for powerHold at now, and
