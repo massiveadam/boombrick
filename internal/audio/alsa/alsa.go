@@ -5,13 +5,14 @@ package alsa
 /*
 #cgo LDFLAGS: -lasound
 #include <alsa/asoundlib.h>
+#include <errno.h>
 #include <stdlib.h>
 
-// The device keeps 100 ms queued, enough to ride out scheduling hiccups.
-static int bb_open(snd_pcm_t **pcm, const char *name, unsigned int rate) {
+// The device keeps latency_us queued, enough to ride out scheduling hiccups.
+static int bb_open(snd_pcm_t **pcm, const char *name, unsigned int rate, unsigned int latency_us) {
 	int err = snd_pcm_open(pcm, name, SND_PCM_STREAM_PLAYBACK, 0);
 	if (err < 0) return err;
-	err = snd_pcm_set_params(*pcm, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 2, rate, 1, 100000);
+	err = snd_pcm_set_params(*pcm, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 2, rate, 1, latency_us);
 	if (err < 0) {
 		snd_pcm_close(*pcm);
 		*pcm = NULL;
@@ -19,8 +20,18 @@ static int bb_open(snd_pcm_t **pcm, const char *name, unsigned int rate) {
 	return err;
 }
 
-static int bb_write(snd_pcm_t *pcm, const short *buf, snd_pcm_uframes_t frames) {
+// A device that takes nothing for stall_ms is stalled: -ETIMEDOUT, rather than
+// waiting on it for ever. BlueALSA's can stop after an underrun and never
+// start again until it is closed and opened.
+static int bb_write(snd_pcm_t *pcm, const short *buf, snd_pcm_uframes_t frames, int stall_ms) {
 	while (frames > 0) {
+		int w = snd_pcm_wait(pcm, stall_ms);
+		if (w == 0) return -ETIMEDOUT;
+		if (w < 0) {
+			int err = snd_pcm_recover(pcm, w, 1);
+			if (err < 0) return err;
+			continue;
+		}
 		snd_pcm_sframes_t n = snd_pcm_writei(pcm, buf, frames);
 		if (n < 0) {
 			int err = snd_pcm_recover(pcm, (int)n, 1);
@@ -55,6 +66,7 @@ import (
 	"errors"
 	"fmt"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/ujjwal313/boombrick/internal/audio"
@@ -62,19 +74,33 @@ import (
 
 // Device is a playback device: "default", or another ALSA name.
 type Device struct {
-	pcm  *C.snd_pcm_t
-	rate int
-	name string
+	pcm     *C.snd_pcm_t
+	rate    int
+	name    string
+	latency time.Duration // queued in the device; 100 ms unless set
 }
+
+// defaultLatency is what a device keeps queued unless told otherwise.
+const defaultLatency = 100 * time.Millisecond
+
+// stallAfter is how long a device may take nothing before Write gives up on
+// it as stalled.
+const stallAfter = 2 * time.Second
 
 var _ audio.Output = (*Device)(nil)
 
 // New returns the default device, which opens on first use.
-func New() *Device { return &Device{name: "default"} }
+func New() *Device { return &Device{name: "default", latency: defaultLatency} }
 
 // NewNamed returns the device ALSA knows as name, such as a BlueALSA PCM or
 // "plughw:CARD=KA13,DEV=0", which opens on first use.
-func NewNamed(name string) *Device { return &Device{name: name} }
+func NewNamed(name string) *Device { return &Device{name: name, latency: defaultLatency} }
+
+// NewBuffered is NewNamed keeping latency queued: more for a Bluetooth
+// headset, whose link drifts, than for the sound card.
+func NewBuffered(name string, latency time.Duration) *Device {
+	return &Device{name: name, latency: latency}
+}
 
 // Name is the ALSA name the device opens.
 func (d *Device) Name() string { return d.name }
@@ -93,6 +119,10 @@ func (e *Error) Error() string {
 // Busy reports whether the device was held by someone else.
 func (e *Error) Busy() bool { return e.Code == -int(syscall.EBUSY) }
 
+// Stalled reports whether the device stopped taking audio: closed by Write,
+// it plays again once opened afresh.
+func (e *Error) Stalled() bool { return e.Code == -int(syscall.ETIMEDOUT) }
+
 func alsaErr(op string, code C.int) error { return &Error{Op: op, Code: int(code)} }
 
 // Open opens the device at rate. If it is already open at another rate, the
@@ -108,7 +138,7 @@ func (d *Device) Open(rate int) error {
 	var pcm *C.snd_pcm_t
 	name := C.CString(d.name)
 	defer C.free(unsafe.Pointer(name))
-	if err := C.bb_open(&pcm, name, C.uint(rate)); err < 0 {
+	if err := C.bb_open(&pcm, name, C.uint(rate), C.uint(d.latency/time.Microsecond)); err < 0 {
 		return alsaErr("open", err)
 	}
 	d.pcm, d.rate = pcm, rate
@@ -123,7 +153,7 @@ func (d *Device) Write(buf []int16) error {
 	if len(buf) < 2 {
 		return nil
 	}
-	if err := C.bb_write(d.pcm, (*C.short)(unsafe.Pointer(&buf[0])), C.snd_pcm_uframes_t(len(buf)/2)); err < 0 {
+	if err := C.bb_write(d.pcm, (*C.short)(unsafe.Pointer(&buf[0])), C.snd_pcm_uframes_t(len(buf)/2), C.int(stallAfter/time.Millisecond)); err < 0 {
 		// The device is gone or unrecoverable; close it so the next Open
 		// starts afresh.
 		d.Close()

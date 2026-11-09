@@ -54,12 +54,41 @@ func lost(s Sink, st State) bool {
 	return false
 }
 
-// State is what is plugged in and connected.
+// Choice is where the sound is asked to go: Auto follows the rules above;
+// the others pick one output while it is there, and fall back to Auto when it
+// isn't, so a choice never leaves the music with nowhere to play.
+type Choice uint8
+
+const (
+	Auto      Choice = iota
+	ThisOne          // the device's own: the speaker, or a wired plug
+	ChooseBT         // the Bluetooth headset
+	ChooseUSB        // the USB DAC
+)
+
+// Choices are the choices there are, in the order a menu steps through them.
+var Choices = []Choice{Auto, ThisOne, ChooseBT, ChooseUSB}
+
+// Available reports whether c can be had in st: Auto and the device's own
+// always, a headset or DAC while connected.
+func (c Choice) Available(st State) bool {
+	switch c {
+	case ChooseBT:
+		return st.Bluetooth != ""
+	case ChooseUSB:
+		return st.USB != ""
+	}
+	return true
+}
+
+// State is what is plugged in and connected, and where the sound is asked
+// to go.
 type State struct {
 	USB       string // the DAC's ALSA name, or ""
 	Wired     bool
 	Bluetooth string // the headset's ALSA name, or ""
 	Codec     string // the codec's name; "" for "default"
+	Choice    Choice
 }
 
 // Resolve is where the sound goes for st.
@@ -67,6 +96,18 @@ func Resolve(st State) Sink {
 	codec := st.Codec
 	if codec == "" {
 		codec = "default"
+	}
+	device := Sink{Speaker, codec}
+	if st.Wired {
+		device = Sink{Wired, codec}
+	}
+	switch {
+	case st.Choice == ThisOne:
+		return device
+	case st.Choice == ChooseBT && st.Bluetooth != "":
+		return Sink{Bluetooth, st.Bluetooth}
+	case st.Choice == ChooseUSB && st.USB != "":
+		return Sink{USB, st.USB}
 	}
 	switch {
 	case st.USB != "":
@@ -97,6 +138,11 @@ type Router struct {
 	now        func() time.Time
 	sleep      func(time.Duration)
 
+	// OnSink, if set, hears each sink the router moves to, as it moves: an EQ
+	// kept per output follows it. It is called with the router locked, from
+	// the thread that writes the sound, so it must be quick.
+	OnSink func(Sink)
+
 	mu      sync.Mutex
 	cur     audio.Output
 	sink    Sink
@@ -125,6 +171,15 @@ func (r *Router) Sink() Sink {
 }
 
 type busy interface{ Busy() bool }
+
+// stalled is a device that stopped taking audio and plays again once opened
+// afresh, as BlueALSA's can after an underrun.
+type stalled interface{ Stalled() bool }
+
+func isStalled(err error) bool {
+	var s stalled
+	return errors.As(err, &s) && s.Stalled()
+}
 
 func isBusy(err error) bool {
 	var b busy
@@ -163,7 +218,11 @@ func (r *Router) openLocked(s Sink, rate int) error {
 		r.cur = r.open(s.Name)
 		r.log("output", "to", s.Kind.String(), "device", s.Name)
 	}
+	moved := s != r.sink
 	r.sink, r.rate, r.checked = s, rate, r.now()
+	if moved && r.OnSink != nil {
+		r.OnSink(s)
+	}
 	return r.retry(rate)
 }
 
@@ -178,7 +237,17 @@ func (r *Router) Write(buf []int16) error {
 	if now := r.now(); now.Sub(r.checked) >= r.CheckEvery {
 		r.checked = now
 		st := r.state()
-		if s := Resolve(st); s.Name != r.sink.Name {
+		s := Resolve(st)
+		if s.Name == r.sink.Name && s.Kind != r.sink.Kind {
+			// The same device, another way out: the speaker and a wired plug
+			// share the codec, and only the sink's kind says which plays.
+			r.sink = s
+			r.log("output", "to", s.Kind.String(), "device", s.Name)
+			if r.OnSink != nil {
+				r.OnSink(s)
+			}
+		}
+		if s.Name != r.sink.Name {
 			if lost(r.sink, st) {
 				r.log("output lost", "was", r.sink.Kind.String())
 				r.cur.Close()
@@ -194,6 +263,20 @@ func (r *Router) Write(buf []int16) error {
 	}
 	cur := r.cur
 	r.mu.Unlock()
+	err := cur.Write(buf)
+	if !isStalled(err) {
+		return err
+	}
+	// Stalled: open it again, as a pause and play would, and carry on.
+	r.mu.Lock()
+	r.log("output stalled; opened again", "device", r.sink.Name)
+	if r.cur == cur {
+		err = r.retry(r.rate)
+	}
+	r.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	return cur.Write(buf)
 }
 

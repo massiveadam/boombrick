@@ -168,3 +168,90 @@ func TestEngineCallPatternStillPausesOnLoss(t *testing.T) {
 		t.Fatal("carried on out of the speaker")
 	}
 }
+
+func TestResolveChoice(t *testing.T) {
+	all := State{USB: "plughw:CARD=KA13,DEV=0", Wired: true, Bluetooth: "bt_AA"}
+	cases := []struct {
+		name string
+		st   State
+		want Sink
+	}{
+		{"auto keeps the rules", all, Sink{USB, "plughw:CARD=KA13,DEV=0"}},
+		{"this device with a plug", State{Wired: true, Bluetooth: "bt_AA", Choice: ThisOne}, Sink{Wired, "default"}},
+		{"this device over a headset", State{Bluetooth: "bt_AA", Choice: ThisOne}, Sink{Speaker, "default"}},
+		{"the headset over a DAC and a plug", State{USB: "u", Wired: true, Bluetooth: "bt_AA", Choice: ChooseBT}, Sink{Bluetooth, "bt_AA"}},
+		{"a headset that is gone falls back to auto", State{Wired: true, Choice: ChooseBT}, Sink{Wired, "default"}},
+		{"a DAC that is gone falls back to auto", State{Bluetooth: "bt_AA", Choice: ChooseUSB}, Sink{Bluetooth, "bt_AA"}},
+	}
+	for _, c := range cases {
+		if got := Resolve(c.st); got != c.want {
+			t.Errorf("%s: got %+v, want %+v", c.name, got, c.want)
+		}
+	}
+	if ChooseBT.Available(State{}) || !ChooseBT.Available(State{Bluetooth: "x"}) || !ThisOne.Available(State{}) {
+		t.Error("Available")
+	}
+}
+
+func TestOnSinkHearsEachMove(t *testing.T) {
+	g := newRig(State{})
+	var heard []Sink
+	g.r.OnSink = func(s Sink) { heard = append(heard, s) }
+	g.r.Open(48000)
+	g.r.Write(make([]int16, 4))
+	g.set(State{Wired: true}) // the same codec, another way out
+	g.tick()
+	g.r.Write(make([]int16, 4))
+	g.set(State{Wired: true, Bluetooth: "bt", Choice: ChooseBT})
+	g.tick()
+	g.r.Write(make([]int16, 4))
+	g.tick()
+	g.r.Write(make([]int16, 4)) // nothing moved
+	want := []Sink{{Speaker, "default"}, {Wired, "default"}, {Bluetooth, "bt"}}
+	if len(heard) != len(want) {
+		t.Fatalf("heard %+v", heard)
+	}
+	for i := range want {
+		if heard[i] != want[i] {
+			t.Fatalf("heard %+v, want %+v", heard, want)
+		}
+	}
+	if g.devs["default"].closed != true {
+		t.Fatal("the codec stayed open under the headset")
+	}
+}
+
+type stallErr struct{}
+
+func (stallErr) Error() string { return "stalled" }
+func (stallErr) Stalled() bool { return true }
+
+// stallDev stalls on its first write after opening, then plays.
+type stallDev struct {
+	dev
+	stalls int
+}
+
+func (d *stallDev) Write(b []int16) error {
+	if d.stalls > 0 {
+		d.stalls--
+		d.closed = true
+		return stallErr{}
+	}
+	return d.dev.Write(b)
+}
+
+func TestAStalledDeviceIsOpenedAgain(t *testing.T) {
+	sd := &stallDev{dev: dev{name: "bt"}, stalls: 1}
+	r := New(func() State { return State{Bluetooth: "bt"} }, func(string) audio.Output { return sd }, nil)
+	if err := r.Open(48000); err != nil {
+		t.Fatal(err)
+	}
+	opens := sd.opens
+	if err := r.Write(make([]int16, 4)); err != nil {
+		t.Fatalf("a stall came through: %v", err)
+	}
+	if sd.opens != opens+1 || sd.writes != 1 {
+		t.Fatalf("opens %d (was %d), writes %d", sd.opens, opens, sd.writes)
+	}
+}
