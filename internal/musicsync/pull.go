@@ -229,7 +229,7 @@ func Pull(ctx context.Context, src Source, dest string, opts Options) (Result, e
 		}
 	}
 	for _, p := range plan.Delete {
-		full := filepath.Join(dest, filepath.FromSlash(p))
+		full := onCard(dest, p)
 		if err := os.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
 			res.Failed[p] = err
 			continue
@@ -250,6 +250,23 @@ func Pull(ctx context.Context, src Source, dest string, opts Options) (Result, e
 // makePlan compares the manifest with what was synced and what is on disk.
 // A file on disk counts as up to date only if Pull synced it with the same
 // hash and its size still matches.
+// onCard is where the file the manifest calls p is kept under dest. A
+// character beyond the Basic Multilingual Plane - an emoji, as in an album's
+// track names - becomes "_": the RG SP's exFAT driver refuses names holding
+// one, and the file was never kept. The state keeps the manifest's name, so
+// later pulls and deletes find the file by it.
+func onCard(dest, p string) string {
+	if strings.IndexFunc(p, func(r rune) bool { return r > 0xFFFF }) >= 0 {
+		p = strings.Map(func(r rune) rune {
+			if r > 0xFFFF {
+				return '_'
+			}
+			return r
+		}, p)
+	}
+	return filepath.Join(dest, filepath.FromSlash(p))
+}
+
 // stateEvery is how often, at most, a pull saves what it has synced so far.
 const stateEvery = 5 * time.Second
 
@@ -258,7 +275,7 @@ func makePlan(m Manifest, st State, dest string, del bool) Plan {
 	listed := map[string]bool{}
 	for _, e := range m.Files {
 		listed[e.Path] = true
-		full := filepath.Join(dest, filepath.FromSlash(e.Path))
+		full := onCard(dest, e.Path)
 		if old, ok := st.Files[e.Path]; ok && old.SHA256 == e.SHA256 {
 			if info, err := os.Stat(full); err == nil && info.Size() == e.Size {
 				p.Kept++
@@ -337,7 +354,7 @@ func fetch(ctx context.Context, src Source, dest string, e Entry) error {
 		return fmt.Errorf("musicsync: %s: hash mismatch, discarded", e.Path)
 	}
 	f.Close()
-	full := filepath.Join(dest, filepath.FromSlash(e.Path))
+	full := onCard(dest, e.Path)
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}

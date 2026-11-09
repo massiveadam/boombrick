@@ -363,3 +363,12 @@ func TestBatteryFromSysfs(t *testing.T) {
 		t.Fatalf("%d %v %v", pct, ch, ok)
 	}
 }
+
+func TestOnCardReplacesWhatExFATRefuses(t *testing.T) {
+	if got := onCard("/c", "JPEGMAFIA/LP!/11 - 💯.opus"); got != "/c/JPEGMAFIA/LP!/11 - _.opus" {
+		t.Fatalf("emoji: %q", got)
+	}
+	if got := onCard("/c", "Björk/Jóga – live.opus"); got != "/c/Björk/Jóga – live.opus" {
+		t.Fatalf("kept: %q", got)
+	}
+}
