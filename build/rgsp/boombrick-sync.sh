@@ -2,14 +2,17 @@
 # Boombrick's music sync on the RG SP. plorpOS (patched) runs this at boot
 # from System/autostart.d, in the background. Every EVERY seconds it asks
 # rgsp-sync to bring Music/Library in step with the server - which it does
-# only on a home Wi-Fi network and with the charger in (min-battery 101: the
-# battery alone never qualifies), so it never costs battery away from home.
-# Each run is resumable and fetches only what changed.
+# only on a home Wi-Fi network, and on battery only above MIN_BATTERY (a
+# charger always qualifies). On battery the device suspends when idle, and
+# nothing runs then: it syncs while awake. Each run is resumable and fetches
+# only what changed.
 #
 # Settings: Roms/Ports/boombrick/sync.conf, shell variables:
 #   SERVER=http://192.168.1.108:8099     the read-only server (music/ and meta/manifest.json)
 #   HOME_SSID=MyWifi                      comma-separated home networks
 #   EVERY=1800                            seconds between tries (default 30 min)
+#   MIN_BATTERY=30                        least battery, percent, to sync off the charger
+#                                         (101: only on the charger)
 # Without that file, nothing is done.
 SD=/mnt/SDCARD
 DIR=$SD/Roms/Ports/boombrick
@@ -25,6 +28,6 @@ while :; do
 	[ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt 262144 ] && mv -f "$LOG" "$LOG.1"
 	echo "$(date '+%F %T') sync" >> "$LOG"
 	"$DIR/bin/rgsp-sync" auto -from "$SERVER/music/" -manifest "$SERVER/meta/manifest.json" \
-		-to "$SD/Music/Library" -delete -home-ssid "$HOME_SSID" -min-battery 101 >> "$LOG" 2>&1
+		-to "$SD/Music/Library" -delete -home-ssid "$HOME_SSID" -min-battery "${MIN_BATTERY:-30}" >> "$LOG" 2>&1
 	sleep "${EVERY:-1800}"
 done
