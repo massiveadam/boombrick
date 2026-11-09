@@ -38,12 +38,21 @@ func (g Gate) Allow() (bool, string) {
 
 // CurrentSSID is the Wi-Fi network wlan0 is joined to, asked of wpa_cli or
 // iw, whichever the firmware has. $RGSP_SSID stands in for both on a desktop.
-// Untested on the RG SP: which of these BaseOS ships is to be checked.
+// BaseOS has wpa_cli and no iw (the probe, 2026-11-08); plorpOS starts
+// wpa_supplicant with its control socket in /run/wpa_supplicant, which
+// wpa_cli is told, as it looks elsewhere by default.
 func CurrentSSID() (string, bool) {
 	if s, ok := os.LookupEnv("RGSP_SSID"); ok {
 		return s, s != ""
 	}
-	if out, err := exec.Command("wpa_cli", "-i", "wlan0", "status").Output(); err == nil {
+	for _, args := range [][]string{
+		{"-p", "/run/wpa_supplicant", "-i", "wlan0", "status"},
+		{"-i", "wlan0", "status"},
+	} {
+		out, err := exec.Command("wpa_cli", args...).Output()
+		if err != nil {
+			continue
+		}
 		if s := field(out, "ssid="); s != "" && strings.Contains(string(out), "wpa_state=COMPLETED") {
 			return s, true
 		}

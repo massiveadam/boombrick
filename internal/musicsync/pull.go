@@ -196,23 +196,37 @@ func Pull(ctx context.Context, src Source, dest string, opts Options) (Result, e
 	if free, ok := freeSpace(dest); ok && free-opts.Reserve < plan.Bytes {
 		return res, fmt.Errorf("%w: %d bytes to download, %d free beyond the reserve", ErrNoSpace, plan.Bytes, free-opts.Reserve)
 	}
+	// The state is saved every stateEvery and at the end, not after every
+	// file: rewritten and synced each time, on a FAT card it cost more than
+	// the music (a 14,000-file library filled at a third of the card's speed).
+	// A file in place but not yet in the saved state is only fetched again.
+	saved := time.Now()
+	stopped := func(err error) (Result, error) {
+		if serr := saveState(dest, st); serr != nil {
+			err = errors.Join(err, serr)
+		}
+		return res, err
+	}
 	for _, e := range plan.Get {
 		if ctx.Err() != nil {
-			return res, ctx.Err()
+			return stopped(ctx.Err())
 		}
 		if err := fetch(ctx, src, dest, e); err != nil {
 			log.Warn("sync file", "path", e.Path, "err", err)
 			res.Failed[e.Path] = err
 			if ctx.Err() != nil {
-				return res, ctx.Err()
+				return stopped(ctx.Err())
 			}
 			continue
 		}
 		st.Files[e.Path] = e
-		if err := saveState(dest, st); err != nil {
-			return res, err
-		}
 		res.Got++
+		if time.Since(saved) >= stateEvery {
+			if err := saveState(dest, st); err != nil {
+				return res, err
+			}
+			saved = time.Now()
+		}
 	}
 	for _, p := range plan.Delete {
 		full := filepath.Join(dest, filepath.FromSlash(p))
@@ -236,6 +250,9 @@ func Pull(ctx context.Context, src Source, dest string, opts Options) (Result, e
 // makePlan compares the manifest with what was synced and what is on disk.
 // A file on disk counts as up to date only if Pull synced it with the same
 // hash and its size still matches.
+// stateEvery is how often, at most, a pull saves what it has synced so far.
+const stateEvery = 5 * time.Second
+
 func makePlan(m Manifest, st State, dest string, del bool) Plan {
 	var p Plan
 	listed := map[string]bool{}
