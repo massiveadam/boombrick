@@ -39,6 +39,7 @@ type Library struct {
 	rescan    func()
 	ix        *library.Index
 	filter    int
+	order     library.AlbumOrder // how the albums are listed
 	views     [filterCount]views.Grid
 	counts    [filterCount]string    // the filters' counts
 	oneCount  [filterCount]string    // the chosen filter's count alone, when all don't fit
@@ -92,7 +93,7 @@ func (l *Library) SetIndex(ix *library.Index) {
 		return
 	}
 	g := &l.views[albumsFilter]
-	g.SetCountFocus(len(ix.Albums), refocus(old.Albums, ix.Albums, g.Focus(),
+	g.SetCountFocus(len(ix.Albums), refocus(old.AlbumsBy(l.order), ix.AlbumsBy(l.order), g.Focus(),
 		func(a *library.Album) [2]string { return [2]string{a.Artist, a.Title} }))
 	g = &l.views[artistsFilter]
 	g.SetCountFocus(len(ix.Artists), refocus(old.Artists, ix.Artists, g.Focus(),
@@ -126,6 +127,20 @@ func refocus[T any, K comparable](old, now []T, f int, key func(T) K) int {
 	return f
 }
 
+// SetAlbumOrder lists the albums in order o, from the top.
+func (l *Library) SetAlbumOrder(o library.AlbumOrder) {
+	if o == l.order {
+		return
+	}
+	l.order = o
+	if l.ix != nil {
+		l.views[albumsFilter].SetCountFocus(len(l.ix.Albums), 0)
+	}
+}
+
+// albums are the albums as listed.
+func (l *Library) albums() []*library.Album { return l.ix.AlbumsBy(l.order) }
+
 // SetReading says the first scan is running and nothing is indexed yet;
 // until SetIndex the tab says the music is being read.
 func (l *Library) SetReading() { l.reading = true }
@@ -133,8 +148,8 @@ func (l *Library) SetReading() { l.reading = true }
 func (l *Library) empty() bool { return l.ix != nil && len(l.ix.Albums) == 0 }
 
 // Handle switches filters with L2/R2, moves with the D-pad, opens or plays
-// with A and queues with Y. X shuffles an artist or a genre. The empty
-// library rescans with Y.
+// with A, queues with Y and searches with X. ◀ ▶ jump a letter in the
+// artists, songs and genres. The empty library rescans with Y.
 func (l *Library) Handle(ev input.Event, now time.Time) bool {
 	if ev.Kind == input.Release || l.ix == nil {
 		return false
@@ -172,20 +187,67 @@ func (l *Library) Handle(ev input.Event, now time.Time) bool {
 			}
 			return true
 		case input.X:
-			if l.filter != artistsFilter && l.filter != genresFilter || g.Count() == 0 {
-				return false
-			}
-			shuffle(l.p, l.tracksAt(g.Focus()))
+			l.nav.Push(NewSearch(l.nav, l.p, l.ix))
 			return true
 		}
 	}
+	if (ev.Button == input.Left || ev.Button == input.Right) && l.filter != albumsFilter && g.Count() > 0 {
+		step := 1
+		if ev.Button == input.Left {
+			step = -1
+		}
+		if i := jump(g.Count(), g.Focus(), step, l.initial); i != g.Focus() {
+			g.SetFocus(i, now)
+			return true
+		}
+		return false
+	}
 	return g.Move(ev.Button, now)
+}
+
+// initial is the letter item i of the list shown is under.
+func (l *Library) initial(i int) rune {
+	switch l.filter {
+	case artistsFilter:
+		return library.Initial(l.ix.Artists[i].Name)
+	case genresFilter:
+		return library.Initial(l.ix.Genres[i].Name)
+	}
+	return library.Initial(l.ix.Songs[i].Title)
+}
+
+// jump is where a letter's jump from f goes in a list of n: forward, the
+// first item under the next letter; back, the first under f's own letter, or
+// when f is that, under the one before. At either end focus stays.
+func jump(n, f, step int, initial func(int) rune) int {
+	at := initial(f)
+	if step > 0 {
+		for i := f + 1; i < n; i++ {
+			if initial(i) != at {
+				return i
+			}
+		}
+		return f
+	}
+	start := func(i int) int { // the first item under i's letter
+		for i > 0 && initial(i-1) == initial(i) {
+			i--
+		}
+		return i
+	}
+	if s := start(f); s != f {
+		return s
+	}
+	if f == 0 {
+		return f
+	}
+	return start(f - 1)
 }
 
 func (l *Library) open(i int) {
 	switch l.filter {
 	case albumsFilter:
-		l.nav.Push(NewAlbumPage(l.nav, l.p, l.ix.Albums[i]))
+		l.nav.Push(NewAlbumPage(l.nav, l.p, l.albums()[i]))
 	case artistsFilter:
 		l.nav.Push(NewArtistPage(l.nav, l.p, l.ix.Artists[i]))
 	case songsFilter:
@@ -200,7 +262,7 @@ func (l *Library) open(i int) {
 func (l *Library) tracksAt(i int) []player.Track {
 	switch l.filter {
 	case albumsFilter:
-		return screens.Tracks(l.ix.Albums[i].Tracks)
+		return screens.Tracks(l.albums()[i].Tracks)
 	case artistsFilter:
 		return artistTracks(l.ix.Artists[i])
 	case genresFilter:
@@ -281,7 +343,8 @@ func (l *Library) row(i int) *listRow {
 func (l *Library) drawView(u *ui.Context) {
 	g := &l.views[l.filter]
 	if l.filter == albumsFilter {
-		drawAlbums(u, g, l.ix.Albums, listTop, func(i int) string { return l.ix.Albums[i].Artist })
+		albums := l.albums()
+		drawAlbums(u, g, albums, listTop, func(i int) string { return albums[i].Artist })
 		return
 	}
 	playing := l.p.State().Track.Path
@@ -312,12 +375,12 @@ func (l *Library) drawView(u *ui.Context) {
 var (
 	tabHints    = []widgets.Hint{{Key: "L1/R1", Label: "Tabs"}}
 	rescanHints = []widgets.Hint{{Key: "Y", Label: "Rescan SD card"}, {Key: "L1/R1", Label: "Tabs"}}
-	openHints   = []widgets.Hint{{Key: "A", Label: "Open"}, {Key: "Y", Label: "Add to queue"},
+	openHints   = []widgets.Hint{{Key: "A", Label: "Open"}, {Key: "X", Label: "Search"}, {Key: "Y", Label: "Add to queue"},
 		{Key: "L2/R2", Label: "Filter"}, {Key: "L1/R1", Label: "Tabs"}}
-	shuffleHints = []widgets.Hint{{Key: "A", Label: "Open"}, {Key: "X", Label: "Shuffle"}, {Key: "Y", Label: "Add to queue"},
-		{Key: "L2/R2", Label: "Filter"}, {Key: "L1/R1", Label: "Tabs"}}
-	songHints = []widgets.Hint{{Key: "A", Label: "Play"}, {Key: "Y", Label: "Add to queue"},
-		{Key: "L2/R2", Label: "Filter"}, {Key: "L1/R1", Label: "Tabs"}}
+	listHints = []widgets.Hint{{Key: "A", Label: "Open"}, {Key: "X", Label: "Search"}, {Key: "Y", Label: "Add to queue"},
+		{Key: "◀ ▶", Label: "Letter"}, {Key: "L2/R2", Label: "Filter"}}
+	songHints = []widgets.Hint{{Key: "A", Label: "Play"}, {Key: "X", Label: "Search"}, {Key: "Y", Label: "Add to queue"},
+		{Key: "◀ ▶", Label: "Letter"}, {Key: "L2/R2", Label: "Filter"}}
 )
 
 func (l *Library) hints() []widgets.Hint {
@@ -329,7 +392,7 @@ func (l *Library) hints() []widgets.Hint {
 	case l.filter == songsFilter:
 		return songHints
 	case l.filter == artistsFilter, l.filter == genresFilter:
-		return shuffleHints
+		return listHints
 	}
 	return openHints
 }

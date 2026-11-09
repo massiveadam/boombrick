@@ -519,6 +519,16 @@ func (a *App) quickMenu() *quickmenu.Menu {
 	if a.opts.Rescan != nil {
 		act.Rescan = a.rescanNow
 	}
+	if a.opts.Prefs != nil {
+		act.AlbumOrder = func() string { return a.albumOrder().String() }
+		act.StepAlbumOrder = func(step int) {
+			o := a.albumOrder().Next(step)
+			a.opts.Prefs.Set(keys.AlbumOrder, o.String())
+			a.library.SetAlbumOrder(o)
+			a.dirty = true
+		}
+		a.library.SetAlbumOrder(a.albumOrder())
+	}
 	if a.opts.Background != nil {
 		act.PlayInBackground = a.playInBackground
 	}
@@ -964,6 +974,11 @@ func playAlbum(p albumPlayer, al *library.Album, track int, frame int64) {
 func (a *App) queueAlbum(al *library.Album) {
 	a.opts.Player.Enqueue(screens.Tracks(al.Tracks))
 	a.Toast(screens.AddedToQueue)
+}
+
+// albumOrder is how the Library lists albums, as saved.
+func (a *App) albumOrder() library.AlbumOrder {
+	return library.ParseAlbumOrder(a.opts.Prefs.String(keys.AlbumOrder))
 }
 
 // rescanNow rescans and says so: from the quick menu, or X and A together.

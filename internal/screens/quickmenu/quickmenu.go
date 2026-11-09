@@ -36,6 +36,10 @@ type Actions struct {
 	// the row never shows.
 	Output     func() string
 	StepOutput func(step int)
+	// AlbumOrder is how the Library lists albums, and StepAlbumOrder changes
+	// it (◀ ▶, or A for the next); without them the row never shows.
+	AlbumOrder     func() string
+	StepAlbumOrder func(step int)
 	// Rescan looks for music added to or removed from the card; without it
 	// the row never shows.
 	Rescan func()
@@ -46,6 +50,7 @@ const (
 	rowSleep = iota
 	rowEQ
 	rowOutput
+	rowAlbumOrder
 	rowRescan
 	rowScreen
 	rowBackground
@@ -85,6 +90,7 @@ func New(act Actions) *Menu {
 		rowSleep:      {Icon: "moon", Label: "Sleep timer"},
 		rowEQ:         {Icon: "sliders", Label: "Equalizer", Chevron: true},
 		rowOutput:     {Icon: "volume", Label: "Output"},
+		rowAlbumOrder: {Icon: "updown", Label: "Album order"},
 		rowRescan:     {Icon: "refresh", Label: "Rescan library"},
 		rowScreen:     {Icon: "power", Label: "Screen off"},
 		rowBackground: {Icon: "music", Label: "Play in background"},
@@ -95,6 +101,7 @@ func New(act Actions) *Menu {
 		rowSleep:      {{Key: "◀ ▶", Label: "Change"}, {Key: "B", Label: "Close"}},
 		rowEQ:         {{Key: "A", Label: "Open"}, {Key: "B", Label: "Close"}},
 		rowOutput:     {{Key: "◀ ▶", Label: "Change"}, {Key: "B", Label: "Close"}},
+		rowAlbumOrder: {{Key: "◀ ▶", Label: "Change"}, {Key: "B", Label: "Close"}},
 		rowRescan:     {{Key: "A", Label: "Rescan"}, {Key: "B", Label: "Close"}},
 		rowScreen:     {{Key: "A", Label: "Turn off"}, {Key: "B", Label: "Close"}},
 		rowBackground: {{Key: "A", Label: "Play in background"}, {Key: "B", Label: "Close"}},
@@ -112,6 +119,7 @@ func (m *Menu) Open(now time.Time) {
 		case r == rowBackground && (m.act.PlayInBackground == nil || m.act.Playing == nil || !m.act.Playing()):
 		case r == rowEQ && m.act.OpenEQ == nil:
 		case r == rowRescan && m.act.Rescan == nil:
+		case r == rowAlbumOrder && (m.act.AlbumOrder == nil || m.act.StepAlbumOrder == nil):
 		case r == rowOutput && (m.act.Output == nil || m.act.StepOutput == nil):
 		default:
 			m.visible = append(m.visible, r)
@@ -158,6 +166,8 @@ func (m *Menu) Handle(ev input.Event, now time.Time) bool {
 			m.act.SetSleep(screens.NextSleep(m.act.Sleep().Mode, step))
 		case rowOutput:
 			m.act.StepOutput(step)
+		case rowAlbumOrder:
+			m.act.StepAlbumOrder(step)
 		default:
 			return false
 		}
@@ -200,6 +210,8 @@ func (m *Menu) do(now time.Time) {
 		m.act.OpenEQ()
 	case rowOutput:
 		m.act.StepOutput(1)
+	case rowAlbumOrder:
+		m.act.StepAlbumOrder(1)
 	case rowRescan:
 		m.close(now)
 		m.act.Rescan()
@@ -300,5 +312,8 @@ func (m *Menu) refresh(now time.Time) {
 func (m *Menu) refreshOutput() {
 	if m.act.Output != nil {
 		m.rows[rowOutput].Value = m.act.Output()
+	}
+	if m.act.AlbumOrder != nil {
+		m.rows[rowAlbumOrder].Value = m.act.AlbumOrder()
 	}
 }

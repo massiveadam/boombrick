@@ -225,30 +225,30 @@ func TestArtistPageShufflesAll(t *testing.T) {
 
 // X on an artist in the Library shuffles all their songs; it does nothing on
 // albums or songs.
-func TestLibraryShufflesAnArtist(t *testing.T) {
-	p := &fakePlayer{}
-	l := New(&fakeNav{}, p, "/m", nil)
+// X searches the library from every filter.
+func TestLibrarySearches(t *testing.T) {
+	nav := &fakeNav{}
+	l := New(nav, &fakePlayer{}, "/m", nil)
 	l.SetIndex(sampleIndex())
-	if l.Handle(press(input.X), t0) || len(p.lists) != 0 {
-		t.Fatal("X on an album should do nothing")
+	for range 2 {
+		if !l.Handle(press(input.X), t0) {
+			t.Fatal("X should open the search")
+		}
+		l.Handle(press(input.R2), t0)
 	}
-	l.Handle(press(input.R2), t0)
-	l.Handle(press(input.Down), t0) // Odalys
-	if !l.Handle(press(input.X), t0) {
-		t.Fatal("X on an artist should be taken")
+	if len(nav.pushed) != 2 {
+		t.Fatalf("pushed %d pages", len(nav.pushed))
 	}
-	shuffledAll(t, p, odalysSongs)
-	if got := l.hints()[1]; got.Key != "X" || got.Label != "Shuffle" {
+	if _, ok := nav.pushed[0].(*Search); !ok {
+		t.Fatalf("X opened %T", nav.pushed[0])
+	}
+	if got := l.hints()[1]; got.Key != "X" || got.Label != "Search" {
 		t.Fatalf("the second hint is %+v", got)
-	}
-	l.Handle(press(input.R2), t0)
-	if l.Handle(press(input.X), t0) || len(p.lists) != 1 {
-		t.Fatal("X on a song should do nothing")
 	}
 }
 
-// With songs tagged, Genres is the last filter: A opens a genre, X shuffles
-// it and Y queues it.
+// With songs tagged, Genres is the last filter: A opens a genre and Y queues
+// it.
 func TestLibraryGenres(t *testing.T) {
 	p, nav := &fakePlayer{}, &fakeNav{}
 	l := New(nav, p, "/m", nil)
@@ -262,15 +262,13 @@ func TestLibraryGenres(t *testing.T) {
 	for range 3 {
 		l.Handle(press(input.Down), t0) // Folk, Jazz, Pop, Rock
 	}
-	if got := l.hints()[1]; got.Key != "X" || got.Label != "Shuffle" {
+	if got := l.hints()[1]; got.Key != "X" || got.Label != "Search" {
 		t.Fatalf("the second hint is %+v", got)
 	}
 	l.Handle(press(input.Y), t0)
 	if len(p.queued) != 1 || !slices.Equal(p.queued[0], rockSongs) || len(nav.toasts) != 1 {
 		t.Fatalf("Y on Rock queued %q, toasts %v", p.queued, nav.toasts)
 	}
-	l.Handle(press(input.X), t0)
-	shuffledAll(t, p, rockSongs)
 	l.Handle(press(input.A), t0)
 	if pg, ok := nav.pushed[0].(*AlbumPage); !ok || pg.title != "Rock" {
 		t.Fatalf("A on Rock opened %+v", nav.pushed)
@@ -495,7 +493,7 @@ func TestLibraryWhileReading(t *testing.T) {
 		t.Fatal("Y while reading should not rescan")
 	}
 	l.SetIndex(sampleIndex())
-	if got := l.hints(); len(got) != 4 {
+	if got := l.hints(); len(got) != 5 {
 		t.Fatalf("hints once the index loads = %v", got)
 	}
 }
@@ -581,4 +579,56 @@ func TestLibraryAlbumsWithArt(t *testing.T) {
 		l.Draw(u)
 	}
 	uitest.Golden(t, "library-albums-art", off.Image())
+}
+
+// Typing finds the library's artists, albums and songs; Y goes to them, A
+// opens an album and B goes back to the keyboard, then deletes.
+func TestSearchPage(t *testing.T) {
+	p, nav := &fakePlayer{}, &fakeNav{}
+	ix := sampleIndex()
+	s := NewSearch(nav, p, ix)
+	if s.Claims(input.B) {
+		t.Fatal("with nothing typed B should go back")
+	}
+	al := ix.Albums[0]
+	for _, r := range library.Fold(al.Title)[:3] {
+		s.query += string(r)
+	}
+	s.refresh()
+	if len(s.results) == 0 {
+		t.Fatalf("nothing found for %q", s.query)
+	}
+	if !s.Handle(press(input.Y), t0) || !s.onResults {
+		t.Fatal("Y should go to the results")
+	}
+	i := slices.IndexFunc(s.results, func(r result) bool { return r.album == al })
+	if i < 0 {
+		t.Fatalf("%q not found by %q", al.Title, s.query)
+	}
+	s.list.SetFocus(i, t0)
+	s.Handle(press(input.A), t0)
+	if pg, ok := nav.pushed[len(nav.pushed)-1].(*AlbumPage); !ok || pg.title != al.Title {
+		t.Fatalf("A opened %T", nav.pushed[len(nav.pushed)-1])
+	}
+	if !s.Claims(input.B) || !s.Handle(press(input.B), t0) || s.onResults {
+		t.Fatal("B on the results should go back to the keyboard")
+	}
+	q := s.query
+	s.Handle(press(input.B), t0)
+	if s.query != q[:len(q)-1] {
+		t.Fatalf("B on the keyboard should delete: %q", s.query)
+	}
+}
+
+func TestJump(t *testing.T) {
+	names := []string{"Abba", "Air", "Beck", "Björk", "Cake"}
+	at := func(i int) rune { return library.Initial(names[i]) }
+	for _, c := range []struct{ f, step, want int }{
+		{0, 1, 2}, {2, 1, 4}, {4, 1, 4}, // forward to the next letter; at the end, stay
+		{3, -1, 2}, {2, -1, 0}, {1, -1, 0}, {0, -1, 0}, // back to the letter's start, then the one before
+	} {
+		if got := jump(len(names), c.f, c.step, at); got != c.want {
+			t.Errorf("jump from %d by %d = %d, want %d", c.f, c.step, got, c.want)
+		}
+	}
 }

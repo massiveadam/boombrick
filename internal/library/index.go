@@ -37,6 +37,9 @@ type Index struct {
 	byKey   map[[2]string]*Album
 	byPath  map[string]*Album // each file's album
 	spotify map[string]*Track // the files imports downloaded, by Spotify ID
+	// The albums in AlbumsBy's other orders, sorted when first asked for.
+	byArtist, byYear []*Album
+	keys             *searchKeys // the names folded for Search, made on the first
 }
 
 // Load reads the library and sorts it for browsing.

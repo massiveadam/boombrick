@@ -24,6 +24,8 @@ const (
 	// HomeBlocks is Home's blocks in order, "!" before one switched off
 	// (home.Blocks); "" is Home's own order, all on.
 	HomeBlocks = "home.blocks"
+	// AlbumOrder is how the Library lists albums (library.AlbumOrders).
+	AlbumOrder = "library.album_order"
 )
 
 // Defaults holds the value used for a key that has never been set.
@@ -35,6 +37,7 @@ var Defaults = map[string]string{
 	DimAfter:         "30",
 	DimLevel:         "2",
 	HomeBlocks:       "",
+	AlbumOrder:       "A–Z",
 }
 
 // Settings keeps the table in memory and writes changes behind the caller.
