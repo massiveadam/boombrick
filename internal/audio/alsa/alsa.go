@@ -25,6 +25,20 @@ static int bb_open(snd_pcm_t **pcm, const char *name, unsigned int rate, unsigne
 // start again until it is closed and opened.
 static int bb_write(snd_pcm_t *pcm, const short *buf, snd_pcm_uframes_t frames, int stall_ms) {
 	while (frames > 0) {
+		// A device not yet started starts once its buffer is full, but a wait
+		// asks for a period's room: with less than that left it waits for
+		// ever. Write straight in until it runs.
+		if (snd_pcm_state(pcm) == SND_PCM_STATE_PREPARED) {
+			snd_pcm_sframes_t n = snd_pcm_writei(pcm, buf, frames);
+			if (n < 0) {
+				int err = snd_pcm_recover(pcm, (int)n, 1);
+				if (err < 0) return err;
+				continue;
+			}
+			buf += n * 2;
+			frames -= n;
+			continue;
+		}
 		int w = snd_pcm_wait(pcm, stall_ms);
 		if (w == 0) return -ETIMEDOUT;
 		if (w < 0) {
