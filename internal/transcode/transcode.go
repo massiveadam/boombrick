@@ -525,8 +525,9 @@ func make1(ctx context.Context, o Options, it Item) (string, error) {
 		out += ext
 		it.Out += ext
 	}
-	mt := time.Unix(0, it.MTime)
-	_ = os.Chtimes(tmp, mt, mt)
+	// The file keeps the time it was made, not the source's: the manifest
+	// trusts a file whose size and time haven't changed, and a retag that
+	// leaves the size alone would otherwise keep a stale hash.
 	if err := os.Rename(tmp, out); err != nil {
 		return "", err
 	}

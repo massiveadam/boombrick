@@ -142,11 +142,20 @@ func TestRunMakesTheCopy(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(dst, "A/One/01 Song.opus")); string(b) != "opus:flac one" {
 		t.Fatalf("FLAC was not encoded: %q", b)
 	}
-	si, _ := os.Stat(filepath.Join(src, "A/One/01 Song.flac"))
-	di, _ := os.Stat(filepath.Join(dst, "A/One/01 Song.opus"))
-	if !si.ModTime().Equal(di.ModTime()) {
-		t.Fatalf("copy's time %v, source's %v", di.ModTime(), si.ModTime())
+	// A copy has the time it was made, so the manifest sees a remade one
+	// as changed even when its size isn't.
+	old := time.Now().Add(-48 * time.Hour)
+	os.Chtimes(filepath.Join(src, "A/One/01 Song.flac"), old, old)
+	write(t, src, "A/One/01 Song.flac", "flac ONE") // same size, new content
+	os.Chtimes(filepath.Join(src, "A/One/01 Song.flac"), old.Add(time.Hour), old.Add(time.Hour))
+	if _, err := Run(context.Background(), Options{Src: src, Dst: dst, Encoder: &fake{}}); err != nil {
+		t.Fatal(err)
 	}
+	di, _ := os.Stat(filepath.Join(dst, "A/One/01 Song.opus"))
+	if time.Since(di.ModTime()) > time.Minute {
+		t.Fatalf("the remade copy's time is %v, not when it was made", di.ModTime())
+	}
+	before = snapshot(t, src)
 	if after := snapshot(t, src); len(after) != len(before) {
 		t.Fatal("the library changed")
 	} else {
