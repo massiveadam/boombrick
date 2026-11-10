@@ -223,6 +223,11 @@ const DefaultMaxDelete = 0.25
 // library can still lose a whole album.
 const minDeleteGuard = 50
 
+// ErrMismatch is a file that came whole but isn't what the manifest says:
+// the server's copy changed after its manifest was made. Fetching it again
+// can't help until a new manifest comes.
+var ErrMismatch = errors.New("hash mismatch, discarded")
+
 // ErrNoSpace is returned when the card hasn't room for what is to come.
 var ErrNoSpace = errors.New("musicsync: not enough free space")
 
@@ -321,7 +326,14 @@ func Pull(ctx context.Context, src Source, dest string, opts Options) (Result, e
 		return res, err
 	}
 	if len(res.Failed) > 0 {
-		os.Remove(filepath.Join(dest, stateDir, doneName))
+		// Files the manifest misdescribes wait for the next manifest (Quick
+		// then looks no further until it changes); any other failure is
+		// tried again on the next run.
+		if version != "" && allMismatched(res.Failed) {
+			_ = writeAtomic(filepath.Join(dest, stateDir, doneName), []byte(version))
+		} else {
+			os.Remove(filepath.Join(dest, stateDir, doneName))
+		}
 		return res, fmt.Errorf("musicsync: %d file(s) failed", len(res.Failed))
 	}
 	if version != "" {
@@ -443,7 +455,7 @@ func fetch(ctx context.Context, src Source, dest string, e Entry, limit func() i
 	if n != e.Size || hex.EncodeToString(h.Sum(nil)) != e.SHA256 {
 		f.Close()
 		os.Remove(part) // corrupt or changed under us: start again next time
-		return fmt.Errorf("musicsync: %s: hash mismatch, discarded", e.Path)
+		return fmt.Errorf("musicsync: %s: %w", e.Path, ErrMismatch)
 	}
 	f.Close()
 	full := onCard(dest, e.Path)
@@ -545,4 +557,13 @@ func (t *throttled) Read(p []byte) (int, error) {
 		}
 	}
 	return got, err
+}
+
+func allMismatched(failed map[string]error) bool {
+	for _, err := range failed {
+		if !errors.Is(err, ErrMismatch) {
+			return false
+		}
+	}
+	return true
 }

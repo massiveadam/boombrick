@@ -464,3 +464,26 @@ func TestQuickPull(t *testing.T) {
 		t.Fatalf("after a change: %+v %v", res, err)
 	}
 }
+
+// A file the manifest misdescribes isn't fetched again every run: Quick waits
+// for a new manifest.
+func TestQuickWaitsOutAMismatch(t *testing.T) {
+	s := newServer(t, map[string]string{"A/1.opus": "one"})
+	os.WriteFile(filepath.Join(s.root, "A/1.opus"), []byte("ONE"), 0o644) // changed after the manifest
+	gets := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/manifest.json", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, s.manifest) })
+	files := http.FileServer(http.Dir(s.root))
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gets++; files.ServeHTTP(w, r) }))
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	src := HTTPSource{Base: ts.URL + "/"}
+	dest := t.TempDir()
+	quick := Options{Quick: true}
+	if res, err := Pull(context.Background(), src, dest, quick); err == nil || !errors.Is(res.Failed["A/1.opus"], ErrMismatch) {
+		t.Fatalf("first: %v, %v", res.Failed, err)
+	}
+	if res, err := Pull(context.Background(), src, dest, quick); err != nil || !res.Unchanged || gets != 1 {
+		t.Fatalf("second: unchanged %v, fetched %d times, %v", res.Unchanged, gets, err)
+	}
+}
