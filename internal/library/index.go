@@ -35,8 +35,9 @@ type Index struct {
 	Songs   []*Track  // by title
 	Genres  []*Genre  // by name
 	byKey   map[[2]string]*Album
-	byPath  map[string]*Album // each file's album
-	spotify map[string]*Track // the files imports downloaded, by Spotify ID
+	artist  map[string]*Artist // by name, as Album.Artist names them
+	byPath  map[string]*Album  // each file's album
+	spotify map[string]*Track  // the files imports downloaded, by Spotify ID
 	// The albums in AlbumsBy's other orders, sorted when first asked for.
 	byArtist, byYear []*Album
 	keys             *searchKeys // the names folded for Search, made on the first
@@ -92,6 +93,7 @@ func NewIndex(albums []Album) *Index {
 		return cmp.Or(Compare(x.Title, y.Title), Compare(x.Artist, y.Artist))
 	})
 	ix.Genres = genresOf(ix.Artists)
+	ix.artist = artists
 	return ix
 }
 
@@ -130,6 +132,10 @@ func genresOf(artists []*Artist) []*Genre {
 	slices.SortStableFunc(genres, func(x, y *Genre) int { return Compare(x.Name, y.Name) })
 	return genres
 }
+
+// Artist finds an album artist by name, as an Album's Artist gives it, or
+// returns nil.
+func (ix *Index) Artist(name string) *Artist { return ix.artist[name] }
 
 // Album finds an album by its artist and title, or returns nil.
 func (ix *Index) Album(artist, title string) *Album { return ix.byKey[[2]string{artist, title}] }

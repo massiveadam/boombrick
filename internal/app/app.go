@@ -428,7 +428,7 @@ func New(opts Options) (*App, error) {
 	}
 	a.home.SetEmpty(opts.MusicDir, func() { a.rescan(); a.Toast(screens.Scanning) })
 	a.browsing = showsPlaying{opts.Player, a.openNowPlaying}
-	a.home.SetOpen(func(al *library.Album) { a.Push(browse.NewAlbumPage(a, a.browsing, al)) })
+	a.home.SetOpen(func(al *library.Album) { a.Push(browse.NewAlbumPage(a, a.browsing, a.ix, al)) })
 	a.library = browse.New(a, a.browsing, opts.MusicDir, a.rescan)
 	a.loads = newLoader(opts.Load, opts.Progress, a.wake)
 	a.loads.history = opts.History
@@ -1544,7 +1544,7 @@ func (a *App) openPlayingAlbum(now time.Time) {
 	if a.shell.open >= 0 {
 		a.shell.closeOverlay(now)
 	}
-	a.Push(browse.NewAlbumPage(a, a.browsing, al))
+	a.Push(browse.NewAlbumPage(a, a.browsing, a.ix, al))
 }
 
 // powerHeld powers off once Power has been held for powerHold at now, and

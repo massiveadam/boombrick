@@ -34,22 +34,37 @@ const (
 // AlbumPage shows an album's tracks, or a genre's songs laid out the same
 // way. Focus starts on the Play pill.
 type AlbumPage struct {
-	nav    screens.Nav
-	p      Player
-	art    widgets.ArtSpec
-	title  string
-	who    string // the artist and the year when known, or a genre's artist count
-	length string // the songs and their time
-	tracks []player.Track
-	rows   []widgets.Row
-	list   views.Grid
-	onList bool
-	pill   int
-	pills  [pillCount]anim.Value // focus strength
+	nav     screens.Nav
+	p       Player
+	artist  func() *library.Artist // the album's artist, for X; nil on a genre's page
+	back    bool                   // opened from that artist's page: X goes back to it
+	art     widgets.ArtSpec
+	title   string
+	who     string // the artist and the year when known, or a genre's artist count
+	length  string // the songs and their time
+	tracks  []player.Track
+	rows    []widgets.Row
+	list    views.Grid
+	onList  bool
+	pill    int
+	pills   [pillCount]anim.Value     // focus strength
+	hintSet [pillCount][]widgets.Hint // by pill, made on the first frame
 }
 
-// NewAlbumPage opens album a.
-func NewAlbumPage(nav screens.Nav, p Player, a *library.Album) *AlbumPage {
+// NewAlbumPage opens album a; X opens its artist's page, found in ix.
+func NewAlbumPage(nav screens.Nav, p Player, ix *library.Index, a *library.Album) *AlbumPage {
+	pg := albumPage(nav, p, a)
+	pg.artist = func() *library.Artist {
+		if ix == nil {
+			return nil
+		}
+		return ix.Artist(a.Artist)
+	}
+	return pg
+}
+
+// albumPage makes album a's page, with X doing nothing until it is told.
+func albumPage(nav screens.Nav, p Player, a *library.Album) *AlbumPage {
 	who := a.Artist
 	if a.Year > 0 {
 		who += " · " + strconv.Itoa(a.Year)
@@ -91,12 +106,21 @@ func newPage(nav screens.Nav, p Player, art widgets.ArtSpec, title, who, length 
 	return pg
 }
 
-// Handle moves between the pills and the tracks, plays with A and queues with Y.
+// Handle moves between the pills and the tracks, plays with A, queues with Y
+// and opens the album's artist with X.
 func (pg *AlbumPage) Handle(ev input.Event, now time.Time) bool {
 	if ev.Kind == input.Release {
 		return false
 	}
 	switch ev.Button {
+	case input.X:
+		if !pg.hasArtist() {
+			return false
+		}
+		if ev.Kind == input.Press {
+			pg.openArtist()
+		}
+		return ev.Kind == input.Press
 	case input.A:
 		if ev.Kind == input.Press {
 			pg.play()
@@ -142,6 +166,21 @@ func (pg *AlbumPage) Handle(ev input.Event, now time.Time) bool {
 		return false
 	}
 	return true
+}
+
+// hasArtist reports whether X has an artist's page to go to.
+func (pg *AlbumPage) hasArtist() bool { return pg.back || (pg.artist != nil && pg.artist() != nil) }
+
+// openArtist goes to the album's artist: back to their page when it is the
+// one below, so going between the two does not stack them up.
+func (pg *AlbumPage) openArtist() {
+	if pg.back {
+		pg.nav.Pop()
+		return
+	}
+	if ar := pg.artist(); ar != nil {
+		pg.nav.Push(NewArtistPage(pg.nav, pg.p, ar))
+	}
 }
 
 func (pg *AlbumPage) play() {
@@ -225,9 +264,20 @@ var albumHints = [pillCount][]widgets.Hint{
 		{Key: "L1/R1", Label: "Tabs"}},
 }
 
+// artistHint is X's, after A's, on an album's page with an artist to go to.
+var artistHint = widgets.Hint{Key: "X", Label: "Artist"}
+
 func (pg *AlbumPage) hints() []widgets.Hint {
-	if !pg.onList && pg.pill == shufflePill {
-		return albumHints[shufflePill]
+	if pg.hintSet[playPill] == nil { // once: a frame allocates nothing
+		for i, hs := range albumHints {
+			if pg.hasArtist() {
+				hs = append([]widgets.Hint{hs[0], artistHint}, hs[1:]...)
+			}
+			pg.hintSet[i] = hs
+		}
 	}
-	return albumHints[playPill]
+	if !pg.onList && pg.pill == shufflePill {
+		return pg.hintSet[shufflePill]
+	}
+	return pg.hintSet[playPill]
 }

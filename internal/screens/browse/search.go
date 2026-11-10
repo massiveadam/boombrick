@@ -133,7 +133,7 @@ func (s *Search) open(r *result) {
 	case r.artist != nil:
 		s.nav.Push(NewArtistPage(s.nav, s.p, r.artist))
 	case r.album != nil:
-		s.nav.Push(NewAlbumPage(s.nav, s.p, r.album))
+		s.nav.Push(NewAlbumPage(s.nav, s.p, s.ix, r.album))
 	default:
 		s.p.SetShuffle(false)
 		if al := s.ix.AlbumOf(r.song.Path); al != nil {

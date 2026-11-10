@@ -55,7 +55,9 @@ func (pg *ArtistPage) Handle(ev input.Event, now time.Time) bool {
 		a := pg.artist.Albums[pg.grid.Focus()]
 		switch ev.Button {
 		case input.A:
-			pg.nav.Push(NewAlbumPage(pg.nav, pg.p, a))
+			al := albumPage(pg.nav, pg.p, a)
+			al.back = true
+			pg.nav.Push(al)
 			return true
 		case input.Y:
 			pg.p.Enqueue(screens.Tracks(a.Tracks))

@@ -247,7 +247,7 @@ func jump(n, f, step int, initial func(int) rune) int {
 func (l *Library) open(i int) {
 	switch l.filter {
 	case albumsFilter:
-		l.nav.Push(NewAlbumPage(l.nav, l.p, l.albums()[i]))
+		l.nav.Push(NewAlbumPage(l.nav, l.p, l.ix, l.albums()[i]))
 	case artistsFilter:
 		l.nav.Push(NewArtistPage(l.nav, l.p, l.ix.Artists[i]))
 	case songsFilter:

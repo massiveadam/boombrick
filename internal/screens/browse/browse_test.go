@@ -56,10 +56,11 @@ func paths(ts []player.Track) []string {
 type fakeNav struct {
 	pushed []screens.Screen
 	toasts []string
+	pops   int
 }
 
 func (n *fakeNav) Push(s screens.Screen) { n.pushed = append(n.pushed, s) }
-func (n *fakeNav) Pop()                  {}
+func (n *fakeNav) Pop()                  { n.pops++ }
 func (n *fakeNav) Toast(msg string)      { n.toasts = append(n.toasts, msg) }
 
 // sampleIndex is a small library with names from the design.
@@ -120,7 +121,7 @@ func fadesSoftly(t *testing.T, img *image.NRGBA, from, to image.Point) {
 
 // The first track sits just under the tabs; its glow fades out under them.
 func TestAlbumPageFirstTrackGlow(t *testing.T) {
-	pg := NewAlbumPage(&fakeNav{}, &fakePlayer{}, sampleIndex().Album("Odalys", "Copper Season"))
+	pg := NewAlbumPage(&fakeNav{}, &fakePlayer{}, sampleIndex(), sampleIndex().Album("Odalys", "Copper Season"))
 	pg.Handle(press(input.Right), t0)
 	pg.Handle(press(input.Right), t0) // the first track
 	img := render(t, pg, t0.Add(anim.Focus))
@@ -132,7 +133,7 @@ func TestAlbumPageFirstTrackGlow(t *testing.T) {
 func TestAlbumPage(t *testing.T) {
 	ix := sampleIndex()
 	p, nav := &fakePlayer{playing: "/m/Copper Season/Ember.flac"}, &fakeNav{}
-	pg := NewAlbumPage(nav, p, ix.Album("Odalys", "Copper Season"))
+	pg := NewAlbumPage(nav, p, ix, ix.Album("Odalys", "Copper Season"))
 	uitest.Golden(t, "album", render(t, pg, t0))
 
 	pg.Handle(press(input.A), t0) // Play: in order, from the top
@@ -358,13 +359,47 @@ func TestGenrePage(t *testing.T) {
 	uitest.Golden(t, "genre", render(t, NewGenrePage(&fakeNav{}, p, genreIndex().Genres[3]), t0))
 }
 
+// X on an album's page opens its artist; on an album opened from that
+// artist's page it goes back there instead of stacking another copy.
+func TestAlbumPageArtist(t *testing.T) {
+	ix := sampleIndex()
+	al := ix.Album("Odalys", "Copper Season")
+	nav := &fakeNav{}
+	pg := NewAlbumPage(nav, &fakePlayer{}, ix, al)
+	if hs := pg.hints(); hs[1] != artistHint {
+		t.Fatalf("hints %v: no X for the artist after A", hs)
+	}
+	if !pg.Handle(press(input.X), t0) || len(nav.pushed) != 1 {
+		t.Fatalf("X pushed %d pages", len(nav.pushed))
+	}
+	ar, ok := nav.pushed[0].(*ArtistPage)
+	if !ok || ar.artist != ix.Artist("Odalys") || ar.artist == nil {
+		t.Fatalf("X opened %#v, not Odalys's page", nav.pushed[0])
+	}
+
+	ar.Handle(press(input.A), t0) // an album from the artist's page
+	from := nav.pushed[len(nav.pushed)-1].(*AlbumPage)
+	pushed := len(nav.pushed)
+	if !from.Handle(press(input.X), t0) || nav.pops != 1 || len(nav.pushed) != pushed {
+		t.Fatalf("X from the artist's album: %d pops, %d new pages", nav.pops, len(nav.pushed)-pushed)
+	}
+
+	// No artist to go to: a genre's page, or a page with no library.
+	for _, pg := range []*AlbumPage{NewGenrePage(nav, &fakePlayer{}, genreIndex().Genres[0]),
+		NewAlbumPage(nav, &fakePlayer{}, nil, al)} {
+		if pg.Handle(press(input.X), t0) || slices.Contains(pg.hints(), artistHint) {
+			t.Fatalf("X on %q is offered or taken with no artist", pg.title)
+		}
+	}
+}
+
 func TestPageHintsFit(t *testing.T) {
 	u, _ := uitest.NewContext(t, 64, 64)
 	ix := sampleIndex()
-	shuffle := NewAlbumPage(&fakeNav{}, &fakePlayer{}, ix.Recent[0])
+	shuffle := NewAlbumPage(&fakeNav{}, &fakePlayer{}, ix, ix.Recent[0])
 	shuffle.Handle(press(input.Right), t0)
 	for _, hints := range [][]widgets.Hint{
-		NewAlbumPage(&fakeNav{}, &fakePlayer{}, ix.Recent[0]).hints(),
+		NewAlbumPage(&fakeNav{}, &fakePlayer{}, ix, ix.Recent[0]).hints(),
 		shuffle.hints(),
 		NewArtistPage(&fakeNav{}, &fakePlayer{}, ix.Artists[0]).hints(),
 	} {
@@ -439,7 +474,7 @@ func TestFramesDrawnAgainAllocateNothing(t *testing.T) {
 		draw(filterNames[f], l)
 	}
 	draw("an artist's page", NewArtistPage(&fakeNav{}, &fakePlayer{}, ix.Artists[0]))
-	draw("an album's page", NewAlbumPage(&fakeNav{}, &fakePlayer{}, ix.Albums[0]))
+	draw("an album's page", NewAlbumPage(&fakeNav{}, &fakePlayer{}, ix, ix.Albums[0]))
 	draw("a genre's page", NewGenrePage(&fakeNav{}, &fakePlayer{}, ix.Genres[0]))
 }
 
@@ -512,7 +547,7 @@ func TestLibraryHintsFit(t *testing.T) {
 
 func TestEmptyAlbum(t *testing.T) {
 	p, nav := &fakePlayer{}, &fakeNav{}
-	pg := NewAlbumPage(nav, p, &library.Album{Title: "Nothing", Artist: "Nobody"})
+	pg := NewAlbumPage(nav, p, nil, &library.Album{Title: "Nothing", Artist: "Nobody"})
 	pg.Handle(press(input.A), t0)
 	pg.Handle(press(input.Right), t0)
 	pg.Handle(press(input.A), t0) // Shuffle
