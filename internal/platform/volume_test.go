@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -195,4 +196,50 @@ func TestVolumeWatcher(t *testing.T) {
 			t.Fatal("the file was left open")
 		}
 	})
+}
+
+func TestPlorpOSVolume(t *testing.T) {
+	dir := t.TempDir()
+	p := Profile{Firmware: RGSP, tmp: dir}
+	level := p.VolumeSettings()
+	if err := os.WriteFile(level, []byte("7\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, ok := NewVolumeWatcher(level)
+	if !ok || w.last != 7 {
+		t.Fatalf("read %d, %v; want 7", w.last, ok)
+	}
+	// Replaced whole, as plorpOS writes it: the next reading sees the new one.
+	os.WriteFile(level+".tmp", []byte("12\n"), 0o644)
+	os.Rename(level+".tmp", level)
+	if v, ok := w.src.read(); !ok || v != 12 {
+		t.Errorf("after the change: %d, %v; want 12", v, ok)
+	}
+	os.WriteFile(level, []byte("21\n"), 0o644)
+	if _, ok := w.src.read(); ok {
+		t.Error("21 read as a level")
+	}
+
+	ctl := p.VolumeControl()
+	if StepVolume(ctl, true) {
+		t.Error("stepped with no FIFO")
+	}
+	if err := syscall.Mkfifo(ctl, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if StepVolume(ctl, true) {
+		t.Error("stepped with nobody reading")
+	}
+	r, err := os.OpenFile(ctl, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if !StepVolume(ctl, true) || !StepVolume(ctl, false) {
+		t.Fatal("not stepped")
+	}
+	b := make([]byte, 8)
+	if n, _ := r.Read(b); string(b[:n]) != "+-" {
+		t.Errorf("read %q, want \"+-\"", b[:n])
+	}
 }

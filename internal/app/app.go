@@ -85,6 +85,10 @@ type Options struct {
 	// of every button pressed, as NextUI's volume keys may be one, and pauses
 	// it while the screen is off. Without it no pill shows.
 	Volume Volume
+	// StepVolume steps the device volume up or down once, reporting whether
+	// it could: A held with Up or Down does. Without it A goes to the
+	// screens chordWait after its press, as X does.
+	StepVolume func(up bool) bool
 	// Covers supplies album art and the playing album's colour. Without it
 	// the screens show placeholders and the accent stays gold.
 	Covers Covers
@@ -312,6 +316,9 @@ type App struct {
 	// waiting was let go meanwhile.
 	doubleWait time.Duration
 	chordUp    bool
+	// volumeHeld is set once Up or Down stepped the volume with A held,
+	// until A is let go: A does nothing else then.
+	volumeHeld bool
 	// browsing is the player as the Library and album pages have it: playing
 	// opens Now Playing.
 	browsing  showsPlaying
@@ -1213,6 +1220,9 @@ func (a *App) dispatch(e input.Event) {
 	if a.handing.Load() {
 		return // the music is being handed over
 	}
+	if a.volumeKeys(e) {
+		return
+	}
 	if e.Button == input.A || e.Button == input.X {
 		if a.chord(e, now) {
 			return
@@ -1443,10 +1453,41 @@ func (a *App) chord(e input.Event, now time.Time) bool {
 // search.
 const doubleWait = 250 * time.Millisecond
 
+// volumeWait is how long A held waits for Up or Down, which step the volume,
+// before it goes to the screens; let go sooner, it goes then, a tap.
+const volumeWait = time.Second
+
+// volumeKeys steps the volume with Up or Down, pressed or repeating, while A
+// is held and still kept from the screens, and reports whether it took e. A
+// that did is spent until let go, as a chord's buttons are.
+func (a *App) volumeKeys(e input.Event) bool {
+	if a.volumeHeld && !a.held(input.A) {
+		a.volumeHeld = false
+	}
+	if a.opts.StepVolume == nil || a.dark || (e.Button != input.Up && e.Button != input.Down) {
+		return false
+	}
+	waiting := !a.chordAt.IsZero() && a.chordBtn == input.A
+	if !a.held(input.A) || !waiting && !a.volumeHeld {
+		return false
+	}
+	if e.Kind != input.Release {
+		a.chordAt, a.chordUp, a.chorded, a.volumeHeld = time.Time{}, false, true, true
+		a.opts.StepVolume(e.Button == input.Up)
+		if a.opts.Volume != nil {
+			a.opts.Volume.Pressed() // the new level is read, for the pill
+		}
+	}
+	return true
+}
+
 // chordDue is when the A or X waiting goes to the screens.
 func (a *App) chordDue() time.Time {
 	if a.chordBtn == input.X && a.doubleWait > 0 {
 		return a.chordAt.Add(a.doubleWait)
+	}
+	if a.chordBtn == input.A && a.opts.StepVolume != nil {
+		return a.chordAt.Add(volumeWait)
 	}
 	return a.chordAt.Add(a.chordWait)
 }

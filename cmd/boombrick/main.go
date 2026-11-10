@@ -436,8 +436,9 @@ func run(started time.Time) error {
 		keepSaving(ctx, 5*time.Second, p.State, save, savedTrack)
 	}()
 
-	// NextUI's volume keys change the volume NextUI keeps in a file, read for
-	// the volume pill; the app has it read when a button is pressed.
+	// The volume keys change the volume the firmware keeps in a file (NextUI's
+	// settings, plorpOS's level), read for the volume pill; the app has it
+	// read when a button is pressed.
 	var volume *platform.VolumeWatcher
 	if f := prof.VolumeSettings(); f != "" {
 		var ok bool
@@ -513,6 +514,9 @@ func run(started time.Time) error {
 	// exists is set.
 	if volume != nil {
 		opts.Volume = volume
+	}
+	if ctl := prof.VolumeControl(); ctl != "" {
+		opts.StepVolume = func(up bool) bool { return platform.StepVolume(ctl, up) }
 	}
 	if outputs != nil {
 		opts.Output = outputs

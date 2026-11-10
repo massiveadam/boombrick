@@ -5,7 +5,11 @@ import (
 	"encoding/binary"
 	"io"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -37,13 +41,58 @@ const (
 	volumeHold = 1500 * time.Millisecond // how long it is read often
 )
 
-// VolumeSettings is the file NextUI keeps its volume in, or "" under other
-// firmwares.
+// VolumeSettings is the file the firmware keeps its volume in: NextUI's
+// settings, or the level plorpOS (patched) writes on the RG SP. "" under
+// other firmwares.
 func (p Profile) VolumeSettings() string {
-	if p.Firmware != NextUI {
+	switch p.Firmware {
+	case NextUI:
+		return volumeSettingsFile
+	case RGSP:
+		return filepath.Join(p.tmp, "plorpos-volume")
+	}
+	return ""
+}
+
+// VolumeControl is where the volume is stepped from: the FIFO plorpOS
+// (patched) reads while Boombrick runs, a '+' or '-' a step. "" under other
+// firmwares.
+func (p Profile) VolumeControl() string {
+	if p.Firmware != RGSP {
 		return ""
 	}
-	return volumeSettingsFile
+	return filepath.Join(p.tmp, "plorpos-volume-ctl")
+}
+
+// StepVolume asks the firmware at path, a VolumeControl, to step the volume
+// up (up) or down once. It reports whether anything was there to ask: a FIFO
+// nobody reads can't be opened.
+func StepVolume(path string, up bool) bool {
+	if path == "" {
+		return false
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	b := []byte{'-'}
+	if up {
+		b[0] = '+'
+	}
+	_, err = f.Write(b)
+	return err == nil
+}
+
+// textVolume reads a level written as text, 0 to 20, as plorpOS writes it.
+func textVolume(r io.ReaderAt) (level int, ok bool) {
+	var raw [8]byte
+	n, _ := r.ReadAt(raw[:], 0)
+	level, err := strconv.Atoi(strings.TrimSpace(string(raw[:n])))
+	if err != nil || level < 0 || level > volumeLevels {
+		return 0, false
+	}
+	return level, true
 }
 
 // nextUIVolume reads NextUI's volume, 0 to 20, from its settings as NextUI's
@@ -81,8 +130,9 @@ type volumeSource interface {
 // volumeFile is NextUI's settings file, kept open between readings. A reading
 // that fails closes it, so the next opens it afresh.
 type volumeFile struct {
-	path string
-	f    *os.File
+	path  string
+	f     *os.File
+	parse func(io.ReaderAt) (int, bool)
 }
 
 func (v *volumeFile) read() (int, bool) {
@@ -93,9 +143,13 @@ func (v *volumeFile) read() (int, bool) {
 		}
 		v.f = f
 	}
-	level, ok := nextUIVolume(v.f)
-	if !ok {
-		v.close()
+	parse := v.parse
+	if parse == nil {
+		parse = nextUIVolume
+	}
+	level, ok := parse(v.f)
+	if !ok || v.parse != nil {
+		v.close() // a file replaced on each change is opened afresh each time
 	}
 	return level, ok
 }
@@ -125,7 +179,11 @@ type VolumeWatcher struct {
 // reads it once now, the level later readings are compared with; ok reports
 // whether that worked.
 func NewVolumeWatcher(path string) (w *VolumeWatcher, ok bool) {
-	return newVolumeWatcher(&volumeFile{path: path})
+	src := &volumeFile{path: path}
+	if path != volumeSettingsFile {
+		src.parse = textVolume // plorpOS's, replaced whole on each change
+	}
+	return newVolumeWatcher(src)
 }
 
 func newVolumeWatcher(src volumeSource) (*VolumeWatcher, bool) {
