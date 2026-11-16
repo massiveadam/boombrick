@@ -312,10 +312,9 @@ type App struct {
 	chordBtn  input.Button
 	chorded   bool
 	chordWait time.Duration // 0: A and X go straight to the screens
-	// doubleWait is how long X waits for a second X; chordUp that the X
-	// waiting was let go meanwhile.
-	doubleWait time.Duration
-	chordUp    bool
+	// xHold is how long X is held to open the Library's search; until then
+	// or until it is let go, X waits. 0: X waits chordWait as A does.
+	xHold time.Duration
 	// volumeHeld is set once Up or Down stepped the volume with A held,
 	// until A is let go: A does nothing else then.
 	volumeHeld bool
@@ -406,7 +405,7 @@ func New(opts Options) (*App, error) {
 
 	a := &App{
 		chordWait:  chordWait,
-		doubleWait: doubleWait,
+		xHold:      xHold,
 		opts:       opts,
 		window:     win,
 		renderer:   r,
@@ -1393,9 +1392,9 @@ const yHold = 800 * time.Millisecond
 const chordWait = 80 * time.Millisecond
 
 // chord handles A and X. Either is held back chordWait for the other, and
-// the two together rescan the library; X is held back doubleWait in case
-// another X follows, and twice opens the Library's search. It reports whether
-// it kept e from the screens. Where a dialog claims the button, on the search
+// the two together rescan the library; X is held back until it is let go or
+// xHold has passed, and held that long opens the Library's search. It
+// reports whether it kept e from the screens. Where a dialog claims the button, on the search
 // itself (X types a space there), or with the screen off, they are the
 // screen's at once.
 func (a *App) chord(e input.Event, now time.Time) bool {
@@ -1417,18 +1416,14 @@ func (a *App) chord(e input.Event, now time.Time) bool {
 	case input.Press:
 		switch {
 		case pending && a.chordBtn == other:
-			a.chordAt, a.chordUp, a.chorded = time.Time{}, false, true
+			a.chordAt, a.chorded = time.Time{}, true
 			a.rescanNow()
-			return true
-		case pending && a.chordBtn == input.X && e.Button == input.X:
-			a.chordAt, a.chordUp, a.chorded = time.Time{}, false, true
-			a.openSearch(now)
 			return true
 		case a.chorded:
 			return true
 		}
 		a.chordFlush(now) // a different one waiting: it goes first
-		a.chordAt, a.chordBtn, a.chordUp = now, e.Button, false
+		a.chordAt, a.chordBtn = now, e.Button
 		return true
 	case input.Release:
 		if a.chorded {
@@ -1438,10 +1433,6 @@ func (a *App) chord(e input.Event, now time.Time) bool {
 			return true
 		}
 		if pending && a.chordBtn == e.Button {
-			if e.Button == input.X && a.doubleWait > 0 {
-				a.chordUp = true // a tap: press and release both go once the wait is over
-				return true
-			}
 			a.chordFlush(now) // let go: the press, then this release
 		}
 		return false
@@ -1449,9 +1440,8 @@ func (a *App) chord(e input.Event, now time.Time) bool {
 	return a.chorded || pending && a.chordBtn == e.Button // repeats wait too
 }
 
-// doubleWait is how long X waits for a second X: two within it open the
-// search.
-const doubleWait = 250 * time.Millisecond
+// xHold is how long X is held to open the Library's search, from anywhere.
+const xHold = 500 * time.Millisecond
 
 // volumeWait is how long A held waits for Up or Down, which step the volume,
 // before it goes to the screens; let go sooner, it goes then, a tap.
@@ -1472,7 +1462,7 @@ func (a *App) volumeKeys(e input.Event) bool {
 		return false
 	}
 	if e.Kind != input.Release {
-		a.chordAt, a.chordUp, a.chorded, a.volumeHeld = time.Time{}, false, true, true
+		a.chordAt, a.chorded, a.volumeHeld = time.Time{}, true, true
 		a.opts.StepVolume(e.Button == input.Up)
 		if a.opts.Volume != nil {
 			a.opts.Volume.Pressed() // the new level is read, for the pill
@@ -1483,8 +1473,8 @@ func (a *App) volumeKeys(e input.Event) bool {
 
 // chordDue is when the A or X waiting goes to the screens.
 func (a *App) chordDue() time.Time {
-	if a.chordBtn == input.X && a.doubleWait > 0 {
-		return a.chordAt.Add(a.doubleWait)
+	if a.chordBtn == input.X && a.xHold > 0 {
+		return a.chordAt.Add(a.xHold)
 	}
 	if a.chordBtn == input.A && a.opts.StepVolume != nil {
 		return a.chordAt.Add(volumeWait)
@@ -1492,34 +1482,35 @@ func (a *App) chordDue() time.Time {
 	return a.chordAt.Add(a.chordWait)
 }
 
-// chordHeld gives the screens the A or X waiting, once its wait has passed
-// at now.
+// chordHeld acts on the A or X waiting once its wait has passed at now: X
+// still down opens the search, A goes to the screens.
 func (a *App) chordHeld(now time.Time) {
 	if a.chordAt.IsZero() || now.Before(a.chordDue()) {
+		return
+	}
+	if a.chordBtn == input.X && a.xHold > 0 {
+		a.chordAt, a.chorded = time.Time{}, true // its release is kept too
+		a.openSearch(now)
+		a.dirty = true
 		return
 	}
 	a.chordFlush(now)
 }
 
-// chordFlush gives the screens the A or X waiting now, with its release when
-// it was let go meanwhile.
+// chordFlush gives the screens the A or X press waiting now.
 func (a *App) chordFlush(now time.Time) {
 	if a.chordAt.IsZero() {
 		return
 	}
-	b, up := a.chordBtn, a.chordUp
-	a.chordAt, a.chordUp = time.Time{}, false
-	changed := a.shell.handle(input.Event{Button: b, Kind: input.Press}, now)
-	if up {
-		changed = a.shell.handle(input.Event{Button: b, Kind: input.Release}, now) || changed
-	}
-	if changed {
+	b := a.chordBtn
+	a.chordAt = time.Time{}
+	if a.shell.handle(input.Event{Button: b, Kind: input.Press}, now) {
 		a.dirty = true
 		a.homeAgain()
 	}
 }
 
-// openSearch opens the Library's search over everything: on X pressed twice.
+// openSearch opens the Library's search over everything: on X held.
 func (a *App) openSearch(now time.Time) {
 	if a.ix == nil {
 		return

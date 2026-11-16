@@ -78,19 +78,21 @@ func TestXAndAChord(t *testing.T) {
 	}
 }
 
-// X twice opens the Library's search; once, it reaches the screen after the
-// wait, press and release together.
-func TestXTwiceSearches(t *testing.T) {
+// X held for xHold opens the Library's search, from any tab, and its release
+// reaches nothing; a tap is the screen's as it is let go.
+func TestXHeldSearches(t *testing.T) {
 	a, tab := darkApp(nil)
 	lib := &page{name: "library"}
 	a.shell.stacks = append(a.shell.stacks, []screens.Screen{lib})
-	a.chordWait, a.doubleWait = chordWait, doubleWait
+	a.chordWait, a.xHold = chordWait, xHold
 	a.ix = library.NewIndex(nil)
 	a.dispatch(press(input.X))
+	a.chordHeld(time.Now().Add(xHold / 2))
+	if len(tab.got) != 0 || len(a.shell.stacks[libraryTab]) != 1 {
+		t.Fatal("X acted before it was held long enough")
+	}
+	a.chordHeld(time.Now().Add(xHold))
 	a.dispatch(release(input.X))
-	a.dispatch(press(input.X))
-	a.dispatch(release(input.X))
-	a.chordHeld(time.Now().Add(time.Second))
 	if a.shell.tab != libraryTab || len(a.shell.stacks[libraryTab]) != 2 || len(tab.got) != 0 {
 		t.Fatalf("tab %d, library pages %d, home heard %v", a.shell.tab, len(a.shell.stacks[libraryTab]), tab.got)
 	}
@@ -100,12 +102,11 @@ func TestXTwiceSearches(t *testing.T) {
 
 	a.shell.tab = 0
 	a.dispatch(press(input.X))
-	a.dispatch(release(input.X))
 	if len(tab.got) != 0 {
-		t.Fatal("X reached the screen before the wait")
+		t.Fatal("X reached the screen while still down")
 	}
-	a.chordHeld(time.Now().Add(doubleWait))
+	a.dispatch(release(input.X))
 	if !slices.Equal(tab.got, []input.Button{input.X, input.X}) {
-		t.Fatalf("one X: home heard %v", tab.got)
+		t.Fatalf("a tap: home heard %v", tab.got)
 	}
 }
