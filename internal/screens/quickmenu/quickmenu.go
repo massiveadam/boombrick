@@ -1,5 +1,6 @@
 // Package quickmenu is the quick menu Menu opens over any screen: the sleep
-// timer, the screen, playing in the background, Settings and quitting.
+// timer, the output and the Bluetooth headsets, the screen, playing in the
+// background, Settings and quitting.
 package quickmenu
 
 import (
@@ -36,6 +37,13 @@ type Actions struct {
 	// the row never shows.
 	Output     func() string
 	StepOutput func(step int)
+	// Bluetooth is the paired headsets and speakers as last read, never
+	// waiting; RefreshBT reads them again, and ToggleBT connects or
+	// disconnects one, both in the background. Without them the row never
+	// shows.
+	Bluetooth func() BTList
+	RefreshBT func()
+	ToggleBT  func(addr string)
 	// AlbumOrder is how the Library lists albums, and StepAlbumOrder changes
 	// it (◀ ▶, or A for the next); without them the row never shows.
 	AlbumOrder     func() string
@@ -50,6 +58,7 @@ const (
 	rowSleep = iota
 	rowEQ
 	rowOutput
+	rowBluetooth
 	rowAlbumOrder
 	rowRescan
 	rowScreen
@@ -81,6 +90,7 @@ type Menu struct {
 	hints   [rowCount][]widgets.Hint
 	visible []int      // the rows shown, as they were when the menu opened
 	scroll  anim.Value // how far the rows are scrolled, when they don't all fit
+	bt      btPage     // the Bluetooth page, shown in the panel in the rows' place
 }
 
 // New returns the menu, closed.
@@ -90,6 +100,7 @@ func New(act Actions) *Menu {
 		rowSleep:      {Icon: "moon", Label: "Sleep timer"},
 		rowEQ:         {Icon: "sliders", Label: "Equalizer", Chevron: true},
 		rowOutput:     {Icon: "volume", Label: "Output"},
+		rowBluetooth:  {Icon: "bluetooth", Label: "Bluetooth", Chevron: true},
 		rowAlbumOrder: {Icon: "updown", Label: "Album order"},
 		rowRescan:     {Icon: "refresh", Label: "Rescan library"},
 		rowScreen:     {Icon: "power", Label: "Screen off"},
@@ -101,6 +112,7 @@ func New(act Actions) *Menu {
 		rowSleep:      {{Key: "◀ ▶", Label: "Change"}, {Key: "B", Label: "Close"}},
 		rowEQ:         {{Key: "A", Label: "Open"}, {Key: "B", Label: "Close"}},
 		rowOutput:     {{Key: "◀ ▶", Label: "Change"}, {Key: "B", Label: "Close"}},
+		rowBluetooth:  {{Key: "A", Label: "Open"}, {Key: "B", Label: "Close"}},
 		rowAlbumOrder: {{Key: "◀ ▶", Label: "Change"}, {Key: "B", Label: "Close"}},
 		rowRescan:     {{Key: "A", Label: "Rescan"}, {Key: "B", Label: "Close"}},
 		rowScreen:     {{Key: "A", Label: "Turn off"}, {Key: "B", Label: "Close"}},
@@ -121,11 +133,15 @@ func (m *Menu) Open(now time.Time) {
 		case r == rowRescan && m.act.Rescan == nil:
 		case r == rowAlbumOrder && (m.act.AlbumOrder == nil || m.act.StepAlbumOrder == nil):
 		case r == rowOutput && (m.act.Output == nil || m.act.StepOutput == nil):
+		case r == rowBluetooth && (m.act.Bluetooth == nil || m.act.RefreshBT == nil || m.act.ToggleBT == nil):
 		default:
 			m.visible = append(m.visible, r)
 		}
 	}
-	m.open, m.focus = true, rowSleep
+	m.open, m.focus, m.bt.open = true, rowSleep, false
+	if m.act.RefreshBT != nil {
+		m.act.RefreshBT() // for the row's value
+	}
 	for i := range m.k {
 		m.k[i].Set(0)
 	}
@@ -150,6 +166,9 @@ func (m *Menu) Visible(now time.Time) bool { return m.open || m.shown.At(now) > 
 func (m *Menu) Handle(ev input.Event, now time.Time) bool {
 	if !m.open || ev.Kind == input.Release {
 		return false
+	}
+	if m.bt.open {
+		return m.handleBT(ev, now)
 	}
 	switch ev.Button {
 	case input.Up:
@@ -210,6 +229,8 @@ func (m *Menu) do(now time.Time) {
 		m.act.OpenEQ()
 	case rowOutput:
 		m.act.StepOutput(1)
+	case rowBluetooth:
+		m.openBT(now)
 	case rowAlbumOrder:
 		m.act.StepAlbumOrder(1)
 	case rowRescan:
@@ -231,7 +252,7 @@ func (m *Menu) do(now time.Time) {
 
 // Animating reports whether the menu or its focus is moving.
 func (m *Menu) Animating(now time.Time) bool {
-	if !m.shown.Done(now) || !m.scroll.Done(now) {
+	if !m.shown.Done(now) || !m.scroll.Done(now) || !m.bt.k.Done(now) {
 		return true
 	}
 	for i := range m.k {
@@ -248,13 +269,23 @@ func (m *Menu) Due(t time.Time) (time.Time, bool) {
 	if !m.open {
 		return time.Time{}, false
 	}
-	return screens.SleepDue(m.act.Sleep(), t)
+	due, ok := screens.SleepDue(m.act.Sleep(), t)
+	if m.bt.open {
+		if next := m.bt.asked.Add(btEvery); !ok || next.Before(due) {
+			due, ok = next, true // the list is read again then
+		}
+	}
+	return due, ok
 }
 
 // Draw draws the menu over the frame drawn so far, and its hints.
 func (m *Menu) Draw(u *ui.Context) {
 	shown := float32(m.shown.At(u.Now))
 	if shown <= 0 {
+		return
+	}
+	if m.bt.open {
+		m.drawBT(u, shown)
 		return
 	}
 	m.refresh(u.Now)
@@ -315,5 +346,9 @@ func (m *Menu) refreshOutput() {
 	}
 	if m.act.AlbumOrder != nil {
 		m.rows[rowAlbumOrder].Value = m.act.AlbumOrder()
+	}
+	if m.act.Bluetooth != nil {
+		l := m.act.Bluetooth()
+		m.rows[rowBluetooth].Value, m.rows[rowBluetooth].Active = l.summary(), l.connected() != ""
 	}
 }

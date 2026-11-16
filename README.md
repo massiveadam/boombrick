@@ -71,7 +71,7 @@ The Downloader card updates yt-dlp, which YouTube Music downloads use, the same 
 | Select | The album playing |
 | X held | Search the library, from anywhere |
 | X and A together | Rescan the library |
-| Menu | Quick menu: sleep timer, equalizer, output, album order, rescan the library, screen off, play in background, Settings, quit |
+| Menu | Quick menu: sleep timer, equalizer, output, Bluetooth headsets, album order, rescan the library, screen off, play in background, Settings, quit |
 | Power | Screen off and on; hold for a second to power off |
 
 With the screen off, L1 and R1 skip back and on, and A plays or pauses. Each screen shows its buttons along the bottom.

@@ -50,6 +50,31 @@ func TestConnectedAudio(t *testing.T) {
 	}
 }
 
+// pairedAudio lists the paired headsets and speakers by name, connected or
+// not, and leaves out what isn't paired or isn't audio.
+func TestPairedAudio(t *testing.T) {
+	paired := func(addr, alias, icon string, isPaired, connected bool) map[string]map[string]dbus.Variant {
+		d := device(alias, "", icon, connected)
+		d["org.bluez.Device1"]["Address"] = dbus.MakeVariant(addr)
+		d["org.bluez.Device1"]["Paired"] = dbus.MakeVariant(isPaired)
+		return d
+	}
+	objects := map[dbus.ObjectPath]map[string]map[string]dbus.Variant{
+		"/org/bluez/hci0":                    {"org.bluez.Adapter1": {}},
+		"/org/bluez/hci0/dev_11_22_33_44_55": paired("11:22:33:44:55:66", "Pixel", "phone", true, true),
+		"/org/bluez/hci0/dev_AA_BB_CC_DD_EE": paired("AA:BB:CC:DD:EE:FF", "kite Buds", "audio-headset", true, true),
+		"/org/bluez/hci0/dev_FF_EE_DD_CC_BB": paired("FF:EE:DD:CC:BB:AA", "Filbert", "audio-headphones", true, false),
+		"/org/bluez/hci0/dev_00_00_00_00_00": paired("00:00:00:00:00:01", "Seen once", "audio-card", false, false),
+	}
+	got := pairedAudio(objects)
+	if len(got) != 2 || got[0].Name != "Filbert" || got[0].Connected || got[1].Addr != "AA:BB:CC:DD:EE:FF" || !got[1].Connected {
+		t.Fatalf("pairedAudio = %+v", got)
+	}
+	if got[0].path != "/org/bluez/hci0/dev_FF_EE_DD_CC_BB" {
+		t.Fatalf("path %q", got[0].path)
+	}
+}
+
 // withAdapter is a sysfs tree that lists a Bluetooth adapter.
 func withAdapter(t *testing.T) string {
 	return sysfs(t, map[string]string{"bluetooth/hci0/name": "hci0"})

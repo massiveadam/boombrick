@@ -166,6 +166,9 @@ type Options struct {
 	// Output is the choice of where the sound goes (the RG SP's quick menu
 	// Output row); nil where the firmware routes it.
 	Output OutputChoice
+	// Bluetooth connects and disconnects the paired headsets, the quick
+	// menu's Bluetooth page; nil shows no such row.
+	Bluetooth Bluetooth
 	// Script drives the app on a desktop, for tests and screenshots; see
 	// script.go. "" for none.
 	Script string
@@ -545,6 +548,10 @@ func (a *App) quickMenu() *quickmenu.Menu {
 	}
 	if a.opts.Output != nil {
 		act.Output, act.StepOutput = a.opts.Output.Label, a.opts.Output.Step
+	}
+	if a.opts.Bluetooth != nil {
+		bt := &btMenu{bt: a.opts.Bluetooth, changed: func() { a.redraw.Store(true); a.wake() }}
+		act.Bluetooth, act.RefreshBT, act.ToggleBT = bt.List, bt.Refresh, bt.Toggle
 	}
 	if a.opts.EQ != nil {
 		at := a.shell.add(overlay{button: input.None, screen: eqscreen.New(a.opts.EQ, a.Toast)})

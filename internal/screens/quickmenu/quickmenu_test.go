@@ -200,3 +200,48 @@ func TestRescanRow(t *testing.T) {
 		t.Fatalf("rescans %d, open %v", rescans, m.IsOpen())
 	}
 }
+
+// The Bluetooth row opens the page in the panel: A connects or disconnects
+// the device focused, B goes back to the rows, and the open page reads the
+// list again every btEvery.
+func TestBluetoothPage(t *testing.T) {
+	a := &acts{}
+	list := BTList{Loaded: true, Devices: []BTDevice{{Addr: "A1", Name: "Filbert", Connected: true}, {Addr: "B2", Name: "Speaker"}}}
+	var toggled []string
+	refreshed := 0
+	act := a.actions()
+	act.Bluetooth = func() BTList { return list }
+	act.RefreshBT = func() { refreshed++ }
+	act.ToggleBT = func(addr string) { toggled = append(toggled, addr) }
+	m := New(act)
+	m.Open(t0)
+	for m.focus != rowBluetooth {
+		if !m.Handle(press(input.Down), t0) {
+			t.Fatal("no Bluetooth row")
+		}
+	}
+	m.Handle(press(input.A), t0)
+	if !m.bt.open || refreshed != 2 {
+		t.Fatalf("page open %v, refreshed %d", m.bt.open, refreshed)
+	}
+	draw(t, m)
+	m.Handle(press(input.Down), t0)
+	m.Handle(press(input.A), t0)
+	if len(toggled) != 1 || toggled[0] != "B2" {
+		t.Fatalf("toggled %v", toggled)
+	}
+	list.Busy = "B2"
+	if m.Handle(press(input.A), t0) || len(toggled) != 1 {
+		t.Fatal("A acted while a device was busy")
+	}
+	if due, ok := m.Due(t0); !ok || !due.Equal(t0.Add(btEvery)) {
+		t.Fatalf("due %v %v", due, ok)
+	}
+	m.Handle(press(input.B), t0)
+	if m.bt.open || !m.IsOpen() || m.focus != rowBluetooth {
+		t.Fatal("B didn't go back to the rows")
+	}
+	if got := list.summary(); got != "Filbert" {
+		t.Fatalf("summary %q", got)
+	}
+}

@@ -520,6 +520,7 @@ func run(started time.Time) error {
 	}
 	if outputs != nil {
 		opts.Output = outputs
+		opts.Bluetooth = bt // plorpOS's radio.sh follows what it does
 	}
 	if features.Streaming {
 		opts.Thumbs, opts.YouTube, opts.Downloads = thumbs, yt, dl
